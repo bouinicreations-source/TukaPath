@@ -1,0 +1,10 @@
+name = "tukapath-worker"
+main = "index.js"
+compatibility_date = "2024-09-01"
+
+# Run these commands to add secrets:
+# wrangler secret put ANTHROPIC_API_KEY
+# wrangler secret put GOOGLE_PLACES_API_KEY
+# wrangler secret put SUPABASE_URL
+# wrangler secret put SUPABASE_SERVICE_KEY
+# wrangler secret put OPENAI_API_KEY
