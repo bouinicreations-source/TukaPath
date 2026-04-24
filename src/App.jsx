@@ -5,7 +5,7 @@ import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-d
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/components/AuthContext';
 import ProfileCompletion from '@/components/ProfileCompletion';
-import ConsentReAccept from '@/components/ConsentReaccept.jsx';
+import ConsentReAccept from '@/components/ConsentReAccept.jsx';
 import MaintenanceScreen from '@/components/MaintenanceScreen';
 import AccessBlocked from '@/components/AccessBlocked';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
