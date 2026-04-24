@@ -2,7 +2,9 @@
 
 **About**
 
-View and Edit  your app on [Base44.com](http://Base44.com) 
+# TukaPath
+
+AI-powered travel journey planner.
 
 This project contains everything you need to run your app locally.
 
