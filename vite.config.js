@@ -4,6 +4,9 @@ import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  resolve: {
+    extensions: ['.jsx', '.js', '.tsx', '.ts'],
+  },
   logLevel: 'error', // Suppress warnings, only show errors
   plugins: [
     base44({
