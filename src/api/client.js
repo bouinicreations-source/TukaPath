@@ -8,9 +8,14 @@ const WORKER_URL = import.meta.env.VITE_WORKER_URL;
 
 const auth = {
   async me() {
-    const { data: { user } } = await supabase.auth.getUser();
-    return user || null;
-  },
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  // Attach role from app_metadata so Admin.jsx can read user.role
+  user.role = user.app_metadata?.role || 
+              user.user_metadata?.role || 
+              null;
+  return user;
+},
   async loginWithGoogle() {
     return supabase.auth.signInWithOAuth({
       provider: 'google',
