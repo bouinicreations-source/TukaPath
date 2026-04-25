@@ -257,11 +257,14 @@ export default function Admin() {
   // Navigation state: null = home, string = sectionId, object = { section, item }
   const [nav, setNav] = useState(null);
 
-  useEffect(() => {
-    supabase.auth.getUser().then(r => r.data.user).then(setUser);
-    base44.entities.VisaFeedback.filter({ status: "pending" }).then(r => setPendingVisa(r.length)).catch(() => {});
-    base44.entities.Discovery.filter({ status: "pending" }).then(r => setPendingReviews(r.length)).catch(() => {});
-    base44.entities.LocationSuggestion.filter({ status: "pending" }).then(r => setPendingSuggestions(r.length)).catch(() => {});
+  useEffect(() => {  supabase.auth.getUser().then(r => {
+    const u = r.data.user;
+    if (u) u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+    setUser(u);
+  });
+  base44.entities.VisaFeedback.filter({ status: "pending" }).then(r => setPendingVisa(r.length)).catch(() => {});
+  base44.entities.Discovery.filter({ status: "pending" }).then(r => setPendingReviews(r.length)).catch(() => {});
+  base44.entities.LocationSuggestion.filter({ status: "pending" }).then(r => setPendingSuggestions(r.length)).catch(() => {});
   }, []);
 
   if (!user) {
