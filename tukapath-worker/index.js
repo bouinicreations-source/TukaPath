@@ -75,7 +75,7 @@ export default {
     switch (path) {
       case 'llm': return handleLLM(body, env);
       case 'resolveLocation': return handleResolveLocation(body, env);
-      case 'buildConciergeJourney': if (!user) return err('Unauthorized', 401); return buildConciergeJourney(body, env, user);
+      case 'buildConciergeJourney': return buildConciergeJourney(body, env, user || { id: 'guest', email: 'guest' });
       default: return err(`Unknown endpoint: ${path}`, 404);
     }
   }
