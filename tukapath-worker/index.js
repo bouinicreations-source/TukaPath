@@ -75,7 +75,29 @@ export default {
     switch (path) {
       case 'llm': return handleLLM(body, env);
       case 'resolveLocation': return handleResolveLocation(body, env);
-      case 'buildConciergeJourney': return buildConciergeJourney(body, env, user || { id: 'guest', email: 'guest' });
+      case 'getUserProfile': return handleGetUserProfile(body, env, user);
+      case 'updateUserProfile': return handleUpdateUserProfile(body, env, user);
+      case 'getUserProfile':
+  if (!user) return json(null);
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${user.id}&select=*`, {
+      headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` }
+    });
+    const data = await res.json();
+    return json(Array.isArray(data) ? data[0] || null : data);
+  } catch { return json(null); }
+
+case 'updateUserProfile':
+  if (!user) return json(null);
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${user.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`, Prefer: 'return=representation' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    return json(Array.isArray(data) ? data[0] || null : data);
+  } catch { return json(null); } return buildConciergeJourney(body, env, user || { id: 'guest', email: 'guest' });
       default: return err(`Unknown endpoint: ${path}`, 404);
     }
   }
