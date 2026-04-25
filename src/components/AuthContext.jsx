@@ -37,8 +37,70 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    const urlRef = new URLSearchParams(window.location.search).get('ref');
-    if (urlRef) localStorage.setItem('tukapath_ref', urlRef);
+  const safetyTimer = setTimeout(() => {
+    setIsLoadingAuth(false);
+    setIsGuest(true);
+  }, 5000);
+
+  const init = async () => {
+    try {
+      const siteSettings = await loadSettings();
+      setSettings(siteSettings);
+      if (siteSettings.maintenance_mode === 'true') {
+        const { data: { user: u } } = await supabase.auth.getUser();
+        if (u?.user_metadata?.role !== 'owner') setMaintenanceMode(true);
+        if (u) { setUser(u); setNeedsProfileCompletion(isProfileIncomplete(u)); }
+        clearTimeout(safetyTimer);
+        setIsLoadingAuth(false);
+        return;
+      }
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) {
+        currentUser.role = currentUser.app_metadata?.role || currentUser.user_metadata?.role || null;
+        setUser(currentUser);
+        setIsGuest(false);
+        setNeedsProfileCompletion(isProfileIncomplete(currentUser));
+        setNeedsConsentUpdate(needsConsentReAccept(currentUser, siteSettings));
+      } else {
+        setIsGuest(true);
+      }
+    } catch (e) {
+      console.error('Auth init error:', e);
+      setIsGuest(true);
+    } finally {
+      clearTimeout(safetyTimer);
+      setIsLoadingAuth(false);
+    }
+  };
+
+  init();
+
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session?.user) {
+      const u = session.user;
+      u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+      setUser(u);
+      setIsGuest(false);
+      const s = await loadSettings();
+      setNeedsProfileCompletion(isProfileIncomplete(u));
+      setNeedsConsentUpdate(needsConsentReAccept(u, s));
+    } else if (event === 'SIGNED_OUT') {
+      setUser(null);
+      setIsGuest(true);
+      setNeedsProfileCompletion(false);
+      setNeedsConsentUpdate(false);
+    } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+      const u = session.user;
+      u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+      setUser(u);
+    }
+  });
+
+  return () => {
+    subscription.unsubscribe();
+    clearTimeout(safetyTimer);
+  };
+}, []);
 
     const init = async () => {
       try {
