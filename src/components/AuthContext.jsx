@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
       const latest = s[`${k}_version`];
       return latest && meta[`consent_${k}_version`] !== latest;
     });
-  }
+  
 
   useEffect(() => {
   const safetyTimer = setTimeout(() => {
@@ -101,6 +101,7 @@ export function AuthProvider({ children }) {
     clearTimeout(safetyTimer);
   };
 }, []);
+
 
     const init = async () => {
       try {
