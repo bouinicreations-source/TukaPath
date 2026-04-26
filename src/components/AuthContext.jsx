@@ -4,7 +4,18 @@ import { supabase } from '@/api/supabase';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser]                       = useState(null);
+  // Initialise user from cached session immediately — no flicker on refresh
+  const [user, setUser] = useState(() => {
+    try {
+      const key = Object.keys(localStorage).find(k => k.includes('auth-token'));
+      if (!key) return null;
+      const token = JSON.parse(localStorage.getItem(key));
+      if (!token?.user) return null;
+      const u = token.user;
+      u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+      return u;
+    } catch { return null; }
+  });
   const [isGuest, setIsGuest]                 = useState(false);
   const [isLoadingAuth, setIsLoadingAuth]     = useState(true);
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
@@ -23,12 +34,12 @@ export function AuthProvider({ children }) {
   }
 
   function isProfileIncomplete(u) {
-  if (!u) return false;
-  const meta = u?.user_metadata || {};
-  // Google users have full_name or name — don't ask them to complete profile
-  if (meta.full_name || meta.name || meta.avatar_url) return false;
-  return !meta.first_name || !meta.last_name;
- }
+    if (!u) return false;
+    const meta = u?.user_metadata || {};
+    // Google OAuth users always have name or avatar — never incomplete
+    if (meta.full_name || meta.name || meta.avatar_url || meta.picture) return false;
+    return !meta.first_name && !meta.last_name && !meta.full_name;
+  }
 
   function needsConsentReAccept(u, s) {
     if (!s) return false;
@@ -42,39 +53,10 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setIsLoadingAuth(false);
-      setIsGuest(true);
-    }, 5000);
+      if (!user) setIsGuest(true);
+    }, 8000);
 
     const init = async () => {
-  // Clean up any invalid or old auth tokens before starting
-  try {
-    const tokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
-    if (tokenKey) {
-      const raw = localStorage.getItem(tokenKey);
-      const token = JSON.parse(raw);
-      // If token is expired, remove it so Supabase can start fresh
-      if (token?.expires_at && token.expires_at * 1000 < Date.now()) {
-        localStorage.removeItem(tokenKey);
-      }
-    }
-  } catch {
-    // If anything is malformed, clear all auth storage
-    Object.keys(localStorage)
-      .filter(k => k.includes('auth-token') || k.includes('supabase'))
-      .forEach(k => localStorage.removeItem(k));
-  }
-  // Clear any corrupted sessions from old Base44 auth
-  const tokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
-  if (tokenKey) {
-    try {
-      const token = JSON.parse(localStorage.getItem(tokenKey));
-      if (!token?.access_token || !token?.expires_at) {
-        localStorage.removeItem(tokenKey);
-      }
-    } catch {
-      localStorage.removeItem(tokenKey);
-    }
-  }
       try {
         const siteSettings = await loadSettings();
         setSettings(siteSettings);
@@ -90,19 +72,22 @@ export function AuthProvider({ children }) {
           return;
         }
 
-        const { data: { user: currentUser } } = await supabase.auth.getUser();
-        if (currentUser) {
-          currentUser.role = currentUser.app_metadata?.role || currentUser.user_metadata?.role || null;
-          setUser(currentUser);
+        // Use getSession (cached, instant) instead of getUser (network call)
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const u = session.user;
+          u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+          setUser(u);
           setIsGuest(false);
-          setNeedsProfileCompletion(isProfileIncomplete(currentUser));
-          setNeedsConsentUpdate(needsConsentReAccept(currentUser, siteSettings));
+          setNeedsProfileCompletion(isProfileIncomplete(u));
+          setNeedsConsentUpdate(needsConsentReAccept(u, siteSettings));
         } else {
+          setUser(null);
           setIsGuest(true);
         }
       } catch (e) {
         console.error('Auth init error:', e);
-        setIsGuest(true);
+        if (!user) setIsGuest(true);
       } finally {
         clearTimeout(safetyTimer);
         setIsLoadingAuth(false);
