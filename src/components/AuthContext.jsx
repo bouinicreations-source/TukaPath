@@ -23,9 +23,12 @@ export function AuthProvider({ children }) {
   }
 
   function isProfileIncomplete(u) {
-    const meta = u?.user_metadata || {};
-    return !meta.first_name || !meta.last_name;
-  }
+  if (!u) return false;
+  const meta = u?.user_metadata || {};
+  // Google users have full_name or name — don't ask them to complete profile
+  if (meta.full_name || meta.name || meta.avatar_url) return false;
+  return !meta.first_name || !meta.last_name;
+ }
 
   function needsConsentReAccept(u, s) {
     if (!s) return false;
