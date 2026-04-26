@@ -43,6 +43,23 @@ export function AuthProvider({ children }) {
     }, 5000);
 
     const init = async () => {
+  // Clean up any invalid or old auth tokens before starting
+  try {
+    const tokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
+    if (tokenKey) {
+      const raw = localStorage.getItem(tokenKey);
+      const token = JSON.parse(raw);
+      // If token is expired, remove it so Supabase can start fresh
+      if (token?.expires_at && token.expires_at * 1000 < Date.now()) {
+        localStorage.removeItem(tokenKey);
+      }
+    }
+  } catch {
+    // If anything is malformed, clear all auth storage
+    Object.keys(localStorage)
+      .filter(k => k.includes('auth-token') || k.includes('supabase'))
+      .forEach(k => localStorage.removeItem(k));
+  }
   // Clear any corrupted sessions from old Base44 auth
   const tokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
   if (tokenKey) {
