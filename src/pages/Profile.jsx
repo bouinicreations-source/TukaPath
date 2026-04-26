@@ -56,9 +56,11 @@ export default function Profile() {
 
   useEffect(() => {
     supabase.auth.getUser().then(r => r.data.user).then((u) => {
-      setUser(u);
-      setEditForm({
-        first_name: u.first_name || u.full_name?.split(" ")[0] || "",
+    if (!u) return;
+    u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+    setUser(u);
+    setEditForm({
+      first_name: u.user_metadata?.first_name || u.user_metadata?.full_name?.split(" ")[0] || "",
         last_name: u.last_name || u.full_name?.split(" ").slice(1).join(" ") || "",
         birthdate: u.birthdate || "",
         gender: u.gender || "",
@@ -137,7 +139,13 @@ export default function Profile() {
   return (
     <PullToRefresh
       className="h-full"
-      onRefresh={() => {queryClient.invalidateQueries();supabase.auth.getUser().then(r => r.data.user).then((u) => {setUser(u);setEditForm({ first_name: u.first_name || u.full_name?.split(" ")[0] || "", last_name: u.last_name || u.full_name?.split(" ").slice(1).join(" ") || "", birthdate: u.birthdate || "", gender: u.gender || "", passport_country: u.passport_country || "", country_of_residence: u.country_of_residence || "" });});}}>
+      onRefresh={() => {queryClient.invalidateQueries();
+        supabase.auth.getUser().then(r => r.data.user).then((u) => {
+          if (!u) return;
+          u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+          setUser(u);
+          setEditForm({
+           first_name: u.first_name || u.full_name?.split(" ")[0] || "", last_name: u.last_name || u.full_name?.split(" ").slice(1).join(" ") || "", birthdate: u.birthdate || "", gender: u.gender || "", passport_country: u.passport_country || "", country_of_residence: u.country_of_residence || "" });});}}>
       
     <div className="max-w-lg mx-auto px-5 py-6">
       {/* Header */}
