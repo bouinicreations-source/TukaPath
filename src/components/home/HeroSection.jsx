@@ -1,11 +1,8 @@
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import SuggestPlaceFlow from "@/components/suggestions/SuggestPlaceFlow";
+import { motion } from "framer-motion";
 
 const LOGO_URL = "/logo.jpg";
 
 export default function HeroSection({ settings = {} }) {
-  const [showSuggest, setShowSuggest] = useState(false);
   const headline = settings.headline || "Explore the world differently";
   const subtitle = settings.subtitle || "Find where your budget can take you or hear the story behind the places around you";
   const tagline = settings.tagline || "Hear the story behind every pin.";
@@ -65,25 +62,7 @@ export default function HeroSection({ settings = {} }) {
         >
           {subtitle}
         </motion.p>
-
-        <motion.div
-          initial={{ y: 15, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.5, duration: 0.4 }}
-          className="mt-5"
-        >
-          <button
-            onClick={() => setShowSuggest(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-primary/30 text-primary text-sm font-medium hover:bg-primary/5 transition-colors"
-          >
-            📍 Suggest a place
-          </button>
-        </motion.div>
       </div>
-
-      <AnimatePresence>
-        {showSuggest && <SuggestPlaceFlow onClose={() => setShowSuggest(false)} />}
-      </AnimatePresence>
     </section>
   );
 }

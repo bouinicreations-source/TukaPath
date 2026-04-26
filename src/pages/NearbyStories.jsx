@@ -6,13 +6,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapContainer, TileLayer, Marker, useMap, CircleMarker, useMapEvents } from "react-leaflet";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, LocateFixed, Shuffle, Search, MapPin, Headphones, X, Map, LayoutGrid, Heart, ChevronUp, Clock, Play, Lock, TrendingUp } from "lucide-react";
+import { ArrowLeft, LocateFixed, Shuffle, Search, MapPin, Headphones, X, Map, LayoutGrid, Heart, ChevronUp, Clock, Play, Lock, TrendingUp, Plus } from "lucide-react";
 import LocationPermissionPrompt from "@/components/LocationPermissionPrompt";
 import ExploreGrid from "@/components/stories/ExploreGrid";
 import { motion, AnimatePresence } from "framer-motion";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 import { useAuth } from "@/components/AuthContext";
+import SuggestPlaceFlow from "@/components/suggestions/SuggestPlaceFlow";
 import GuestSignupModal from "@/components/GuestSignupModal";
 import GuestUpgradeOverlay from "@/components/GuestUpgradeOverlay";
 
@@ -114,9 +115,10 @@ export default function NearbyStories() {
   const [filter, setFilter] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState("map");
-  const [activePin, setActivePin] = useState(null); // location object
-  const [sessionSeen, setSessionSeen] = useState(new Set()); // gray after tap
+  const [activePin, setActivePin] = useState(null);
+  const [sessionSeen, setSessionSeen] = useState(new Set());
   const [activeCategory, setActiveCategory] = useState("all");
+  const [showSuggest, setShowSuggest] = useState(false);
   const sheetRef = useRef(null);
   const dragStartY = useRef(0);
   const SHEET_COLLAPSED = 200; // px visible when collapsed
@@ -347,6 +349,13 @@ export default function NearbyStories() {
           />
           {searchQuery && <button onClick={() => setSearchQuery("")}><X className="w-3.5 h-3.5 text-muted-foreground" /></button>}
         </div>
+        <button
+          onClick={() => setShowSuggest(true)}
+          className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-primary/10 text-primary text-xs font-medium shrink-0"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Suggest
+        </button>
         <div className="flex items-center bg-muted rounded-xl p-1 shrink-0">
           <button onClick={() => setViewMode("map")} className="px-2.5 py-1 rounded-lg text-xs font-medium bg-card shadow text-foreground">
             <Map className="w-3.5 h-3.5" />
@@ -356,6 +365,10 @@ export default function NearbyStories() {
           </button>
         </div>
       </div>
+
+      <AnimatePresence>
+        {showSuggest && <SuggestPlaceFlow onClose={() => setShowSuggest(false)} />}
+      </AnimatePresence>
 
       {/* Subtle helper message */}
       <AnimatePresence>

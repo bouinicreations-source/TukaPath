@@ -73,10 +73,15 @@ const MULTI_LEG_PATTERNS = [
   /flights?\s+(are|is)\s+(booked|sorted|done)/i,
   /\bitinerary\b/i,
   /plan\s+(my\s+)?(time|trip|stay|visit)/i,
+  /\btrain\s+from\b/i,                       // "train from Amsterdam to London"
+  /\beurosta(r)?\b/i,                        // Eurostar
+  /\bi\s+(do\s+not|don'?t)\s+need\s+(a\s+)?flight/i, // "I don't need a flight"
+  /\bjust\s+want\s+(you\s+to\s+)?plan/i,    // "just want you to plan"
+  /\bcoming\s+back\s+from\b/i,              // "coming back from London"
+  /\bthen\s+[a-z]+\b/i,                     // "then London"
 ];
 
 function countCities(text) {
-  // Count known city mentions — 3+ strongly suggests multi-leg trip
   const cities = [
     "amsterdam", "london", "paris", "rome", "berlin", "barcelona",
     "madrid", "edinburgh", "dublin", "brussels", "vienna", "prague",
@@ -84,6 +89,7 @@ function countCities(text) {
     "new york", "tokyo", "singapore", "bangkok", "sydney", "toronto",
     "birmingham", "manchester", "glasgow", "liverpool", "copenhagen",
     "stockholm", "oslo", "helsinki", "zurich", "geneva", "milan",
+    "doh", "ams", "lhr", "lhr", "cdg", "jfk", // airport codes
   ];
   const lower = text.toLowerCase();
   return cities.filter(c => lower.includes(c)).length;
@@ -117,9 +123,11 @@ export function classifyIntent(userText) {
   }
 
   // ── MULTI-LEG DETECTION (highest priority) ────────────────────────────────
-  // 3+ cities mentioned = multi-city trip, user wants experience planning not flight help
-  // Also catches "then London", "3 days in Amsterdam", "already have flights" etc.
-  if (cityCount >= 3 || (cityCount >= 2 && hasMultiLegSignal)) {
+  // 3+ cities mentioned = multi-city trip
+  // OR 2 cities + any multi-leg signal = already has flights, wants experience planning
+  // OR "then [city]" pattern = multi-leg
+  const hasThenCity = /\bthen\s+(to\s+)?[a-z]+/i.test(text);
+  if (cityCount >= 3 || (cityCount >= 2 && (hasMultiLegSignal || hasThenCity))) {
     return { intent: "MULTI_LEG_INTENT", origin, destination, cityCount };
   }
 

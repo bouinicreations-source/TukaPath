@@ -60,6 +60,9 @@ DURATION EXTRACTION:
 - "3 days" / "2 weeks" / "a month" → extract number and type, confidence "high"
 - "a week" / "a couple of days" → extract normalized number, confidence "high"
 - "flexible" / "open-ended" → duration_type: "flexible", confidence "high"
+- DATES: "Tuesday 28 April to Sunday 3 May" → calculate duration_days as difference, confidence "high"
+- DATES PER CITY: "2 days in Amsterdam, 4 days in London" → total duration_days = sum, also extract city_durations
+- ARRIVAL/DEPARTURE DATES: extract arrival_date and departure_date if mentioned (ISO format YYYY-MM-DD)
 - NOT mentioned? → duration_days: null, duration_type: null, confidence "low"
 
 TRIP TYPE:

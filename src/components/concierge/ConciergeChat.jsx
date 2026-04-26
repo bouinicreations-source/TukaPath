@@ -634,12 +634,15 @@ export default function ConciergeChat({ onBuild, building, error }) {
 
       if (intent === "MULTI_LEG_INTENT") {
         // Multi-city trip — flights are sorted, user wants experience planning
-        // Extract cities and build anchor chain, then continue normal pipeline
-        setThinking(false);
-        addMsg({ type: "assistant", text: "Multi-city trip — I'll plan what to do in each place. Which city are you starting from?" });
-        setChipsDisabled(false);
-        // Continue into normal journey pipeline with the input
-        // so state machine can extract the cities
+        // Do NOT interrupt — fall through to normal extraction pipeline
+        // The state machine will extract cities, dates, durations from the input
+        // Only add a brief acknowledgement if we haven't already greeted them
+        const hasState = stateRef.current?.origin || stateRef.current?.destination;
+        if (!hasState) {
+          // First message — acknowledge and continue to extraction below
+          // Don't return — let the pipeline run
+        }
+        // Fall through to journey extraction pipeline
       }
 
       // ── JOURNEY PATH: continue existing pipeline ──────────────────────────
