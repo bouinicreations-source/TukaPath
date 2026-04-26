@@ -43,6 +43,18 @@ export function AuthProvider({ children }) {
     }, 5000);
 
     const init = async () => {
+  // Clear any corrupted sessions from old Base44 auth
+  const tokenKey = Object.keys(localStorage).find(k => k.includes('auth-token'));
+  if (tokenKey) {
+    try {
+      const token = JSON.parse(localStorage.getItem(tokenKey));
+      if (!token?.access_token || !token?.expires_at) {
+        localStorage.removeItem(tokenKey);
+      }
+    } catch {
+      localStorage.removeItem(tokenKey);
+    }
+  }
       try {
         const siteSettings = await loadSettings();
         setSettings(siteSettings);
