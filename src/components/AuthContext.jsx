@@ -3,19 +3,21 @@ import { supabase } from '@/api/supabase';
 
 const AuthContext = createContext(null);
 
+function attachRole(u) {
+  if (!u) return u;
+  u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+  return u;
+}
+
+function isProfileIncomplete(u) {
+  if (!u) return false;
+  const meta = u?.user_metadata || {};
+  if (meta.full_name || meta.name || meta.avatar_url || meta.picture) return false;
+  return !meta.first_name && !meta.last_name;
+}
+
 export function AuthProvider({ children }) {
-  // Initialise user from cached session immediately — no flicker on refresh
-  const [user, setUser] = useState(() => {
-    try {
-      const key = Object.keys(localStorage).find(k => k.includes('auth-token'));
-      if (!key) return null;
-      const token = JSON.parse(localStorage.getItem(key));
-      if (!token?.user) return null;
-      const u = token.user;
-      u.role = u.app_metadata?.role || u.user_metadata?.role || null;
-      return u;
-    } catch { return null; }
-  });
+  const [user, setUser]                       = useState(null);
   const [isGuest, setIsGuest]                 = useState(false);
   const [isLoadingAuth, setIsLoadingAuth]     = useState(true);
   const [needsProfileCompletion, setNeedsProfileCompletion] = useState(false);
@@ -33,107 +35,85 @@ export function AuthProvider({ children }) {
     } catch { return {}; }
   }
 
-  function isProfileIncomplete(u) {
-    if (!u) return false;
-    const meta = u?.user_metadata || {};
-    // Google OAuth users always have name or avatar — never incomplete
-    if (meta.full_name || meta.name || meta.avatar_url || meta.picture) return false;
-    return !meta.first_name && !meta.last_name && !meta.full_name;
-  }
-
-  function needsConsentReAccept(u, s) {
-    if (!s) return false;
-    const meta = u?.user_metadata || {};
-    return ['terms','privacy','disclaimer'].some(k => {
-      const latest = s[`${k}_version`];
-      return latest && meta[`consent_${k}_version`] !== latest;
-    });
-  }
-
   useEffect(() => {
-    const safetyTimer = setTimeout(() => {
-      setIsLoadingAuth(false);
-      if (!user) setIsGuest(true);
-    }, 8000);
+    let mounted = true;
 
-    const init = async () => {
-      try {
-        const siteSettings = await loadSettings();
-        setSettings(siteSettings);
+    // Step 1: Listen for auth state changes FIRST before any async work
+    // This ensures we never miss a session restore event
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return;
 
-        if (siteSettings.maintenance_mode === 'true') {
-          const { data: { user: u } } = await supabase.auth.getUser();
-          if (u?.user_metadata?.role !== 'owner') setMaintenanceMode(true);
-          if (u) {
-            u.role = u.app_metadata?.role || u.user_metadata?.role || null;
-            setUser(u);
-            setNeedsProfileCompletion(isProfileIncomplete(u));
-          }
-          return;
-        }
-
-        // Use getSession (cached, instant) instead of getUser (network call)
-        const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          const u = session.user;
-          u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+          const u = attachRole(session.user);
           setUser(u);
           setIsGuest(false);
           setNeedsProfileCompletion(isProfileIncomplete(u));
-          setNeedsConsentUpdate(needsConsentReAccept(u, siteSettings));
-        } else {
+          setIsLoadingAuth(false);
+
+          // Load settings in background — don't block render
+          loadSettings().then(s => {
+            if (mounted) setSettings(s);
+          });
+        } else if (event === 'SIGNED_OUT') {
           setUser(null);
           setIsGuest(true);
+          setIsLoadingAuth(false);
+          setNeedsProfileCompletion(false);
+          setNeedsConsentUpdate(false);
         }
-      } catch (e) {
-        console.error('Auth init error:', e);
-        if (!user) setIsGuest(true);
-      } finally {
-        clearTimeout(safetyTimer);
-        setIsLoadingAuth(false);
       }
-    };
+    );
 
-    init();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session?.user) {
-        const u = session.user;
-        u.role = u.app_metadata?.role || u.user_metadata?.role || null;
+    // Step 2: Then check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      if (session?.user) {
+        const u = attachRole(session.user);
         setUser(u);
         setIsGuest(false);
-        const s = await loadSettings();
         setNeedsProfileCompletion(isProfileIncomplete(u));
-        setNeedsConsentUpdate(needsConsentReAccept(u, s));
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
+      } else {
         setIsGuest(true);
-        setNeedsProfileCompletion(false);
-        setNeedsConsentUpdate(false);
-      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        const u = session.user;
-        u.role = u.app_metadata?.role || u.user_metadata?.role || null;
-        setUser(u);
+      }
+      setIsLoadingAuth(false);
+    }).catch(() => {
+      if (mounted) {
+        setIsGuest(true);
+        setIsLoadingAuth(false);
       }
     });
 
+    // Load settings independently
+    loadSettings().then(s => {
+      if (mounted) setSettings(s);
+    });
+
     return () => {
+      mounted = false;
       subscription.unsubscribe();
-      clearTimeout(safetyTimer);
     };
   }, []);
 
-  const navigateToLogin = () => { window.location.href = '/login'; };
   const loginWithGoogle = () => supabase.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: `${window.location.origin}/AIConcierge` }
   });
-  const logout = async () => { await supabase.auth.signOut(); setUser(null); setIsGuest(true); };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setIsGuest(true);
+  };
+
+  const navigateToLogin = () => { window.location.href = '/login'; };
+
   const completeProfile = (u) => {
     setUser(p => ({ ...p, user_metadata: { ...p?.user_metadata, ...u } }));
     setNeedsProfileCompletion(false);
     setNeedsConsentUpdate(false);
   };
+
   const acceptConsent = () => setNeedsConsentUpdate(false);
 
   return (
