@@ -1,3 +1,30 @@
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  componentDidCatch(error, info) {
+    console.error('TukaPath crash:', error, info);
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding: '20px', color: 'red', fontFamily: 'monospace'}}>
+          <h2>App crashed</h2>
+          <pre>{this.state.error?.message}</pre>
+          <pre>{this.state.error?.stack?.slice(0, 500)}</pre>
+          <button onClick={() => { localStorage.clear(); window.location.reload(); }}>
+            Clear & Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
@@ -113,6 +140,7 @@ const AuthenticatedApp = () => {
 function App() {
 
   return (
+  <ErrorBoundary>
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>
         <Router>
@@ -121,7 +149,8 @@ function App() {
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
-  )
+  </ErrorBoundary>
+ )
 }
 
 export default App
