@@ -60,19 +60,51 @@ function isFarPair(text) {
   return FAR_PAIRS.some(([a, b]) => lower.includes(a) && lower.includes(b));
 }
 
+// Multi-leg signals — user has multiple cities and is planning what to DO there
+// not asking for flight help
+const MULTI_LEG_PATTERNS = [
+  /\bthen\s+(to\s+)?[A-Z][a-z]+/,           // "then to London"
+  /\bafter\s+(that|[A-Z][a-z]+)/,            // "after Amsterdam"
+  /\b(first|then|next|finally)\b.*\b(day|night|week)\b/i,
+  /\b\d+\s+days?\s+(in|at)\b/i,             // "3 days in Amsterdam"
+  /\bstaying\s+in\b/i,
+  /\bnight(s)?\s+in\b/i,
+  /already\s+(have|got|booked)\s+(a\s+)?flight/i,
+  /flights?\s+(are|is)\s+(booked|sorted|done)/i,
+  /\bitinerary\b/i,
+  /plan\s+(my\s+)?(time|trip|stay|visit)/i,
+];
+
+function countCities(text) {
+  // Count known city mentions — 3+ strongly suggests multi-leg trip
+  const cities = [
+    "amsterdam", "london", "paris", "rome", "berlin", "barcelona",
+    "madrid", "edinburgh", "dublin", "brussels", "vienna", "prague",
+    "budapest", "lisbon", "athens", "doha", "dubai", "istanbul",
+    "new york", "tokyo", "singapore", "bangkok", "sydney", "toronto",
+    "birmingham", "manchester", "glasgow", "liverpool", "copenhagen",
+    "stockholm", "oslo", "helsinki", "zurich", "geneva", "milan",
+  ];
+  const lower = text.toLowerCase();
+  return cities.filter(c => lower.includes(c)).length;
+}
+
 /**
  * classifyIntent(userText)
- * Returns { intent, origin, destination }
- * - intent: "FLIGHT_INTENT" | "JOURNEY_INTENT" | "HYBRID_INTENT" | "UNKNOWN"
+ * Returns { intent, origin, destination, cities }
+ * - intent: "FLIGHT_INTENT" | "JOURNEY_INTENT" | "HYBRID_INTENT" | "MULTI_LEG_INTENT" | "UNKNOWN"
  * - origin: extracted origin city (best-effort) or null
  * - destination: extracted destination city (best-effort) or null
+ * - cities: array of detected city names
  */
 export function classifyIntent(userText) {
   const text = userText || "";
 
-  const hasFlightSignal  = FLIGHT_PATTERNS.some(p => p.test(text));
-  const hasJourneySignal = JOURNEY_PATTERNS.some(p => p.test(text));
-  const hasFarPair       = isFarPair(text);
+  const hasFlightSignal    = FLIGHT_PATTERNS.some(p => p.test(text));
+  const hasJourneySignal   = JOURNEY_PATTERNS.some(p => p.test(text));
+  const hasMultiLegSignal  = MULTI_LEG_PATTERNS.some(p => p.test(text));
+  const hasFarPair         = isFarPair(text);
+  const cityCount          = countCities(text);
 
   // Extract rough origin/destination via "from X to Y" pattern
   let origin = null;
@@ -84,30 +116,42 @@ export function classifyIntent(userText) {
     destination = fromTo[2]?.trim() || null;
   }
 
+  // ── MULTI-LEG DETECTION (highest priority) ────────────────────────────────
+  // 3+ cities mentioned = multi-city trip, user wants experience planning not flight help
+  // Also catches "then London", "3 days in Amsterdam", "already have flights" etc.
+  if (cityCount >= 3 || (cityCount >= 2 && hasMultiLegSignal)) {
+    return { intent: "MULTI_LEG_INTENT", origin, destination, cityCount };
+  }
+
+  // "Already have flights" signals override everything — user wants ground planning
+  if (/already\s+(have|got|booked)\s+(a\s+)?flight|flights?\s+(are|is)\s+(booked|sorted)/i.test(text)) {
+    return { intent: "MULTI_LEG_INTENT", origin, destination, cityCount };
+  }
+
   // Pure flight intent (flight signals present, no journey override)
   if (hasFlightSignal && !hasJourneySignal) {
-    return { intent: "FLIGHT_INTENT", origin, destination };
+    return { intent: "FLIGHT_INTENT", origin, destination, cityCount };
   }
 
   // Far pair without explicit drive signal → flight intent
-  if (hasFarPair && !hasJourneySignal) {
-    return { intent: "FLIGHT_INTENT", origin, destination };
+  if (hasFarPair && !hasJourneySignal && !hasMultiLegSignal) {
+    return { intent: "FLIGHT_INTENT", origin, destination, cityCount };
   }
 
   // Both signals → hybrid
   if (hasFlightSignal && hasJourneySignal) {
-    return { intent: "HYBRID_INTENT", origin, destination };
+    return { intent: "HYBRID_INTENT", origin, destination, cityCount };
   }
 
   // Far pair + drive signal → hybrid (flying there, driving after)
   if (hasFarPair && hasJourneySignal) {
-    return { intent: "HYBRID_INTENT", origin, destination };
+    return { intent: "HYBRID_INTENT", origin, destination, cityCount };
   }
 
   // Pure journey signal
   if (hasJourneySignal) {
-    return { intent: "JOURNEY_INTENT", origin, destination };
+    return { intent: "JOURNEY_INTENT", origin, destination, cityCount };
   }
 
-  return { intent: "UNKNOWN", origin, destination };
+  return { intent: "UNKNOWN", origin, destination, cityCount };
 }

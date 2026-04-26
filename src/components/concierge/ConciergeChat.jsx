@@ -120,50 +120,49 @@ const QUESTIONS = {
 // ── Generate AI acknowledgement from state description ─────────────────────
 async function generateAck(stateDesc, nextField, userText, profileHint, isReturn = false) {
   const fieldHints = {
-    duration:            "Ask how long they want to be away — use Q-DUR-01 style. Chips: A couple of hours / Half a day / Full day / Weekend / A week / Two weeks / Flexible.",
-    overnight_ok:        "Ask if they're happy to overnight somewhere along the route. One question, no preamble.",
-    destination:         "Ask where they're headed — or whether it's a loop or open exploration.",
-    transport_mode:      "Ask how they're doing the trip — Car / Motorbike / Walk or hike / Not sure yet. (Q-MOD-01)",
-    driving_rhythm:      "Ask how they like to pace their driving — short bursts / 2–3h then a break / longer stretches. (Q-RHY-01)",
-    transport_secondary: "Ask how they'll get around once they land — rental car / motorbike / walk / public transport. (Q-MOD-02)",
-    scenic_drive_offer:  "Ask if they want a scenic drive designed around their destination. Yes / No.",
-    flight_confirm:      "This looks like a long-distance trip. Ask: flying or driving? (Q-FLT-01 style)",
-    flight_intent:       "Ask: help finding flights, or just plan the ground trip? Chips: Just plan the trip / Help me find flights / Both. (Q-FLT-01)",
+    duration:            "Ask how long they have — but ask it like a person would. Example: 'How long are you thinking — a day, a few days, a week?' Not 'What is your duration?'",
+    overnight_ok:        "This looks like it needs an overnight. Ask: 'Are you happy to sleep somewhere along the way, or want to get back the same day?'",
+    destination:         "Ask where they're headed — or if it's more of an open explore. One sentence.",
+    transport_mode:      "Ask how they're doing it — driving, motorbike, train? Keep it casual.",
+    driving_rhythm:      "Ask how they like to pace it — quick stops every hour or happy to drive longer stretches?",
+    transport_secondary: "Ask how they'll get around once they land — rent a car, walk, public transport?",
+    scenic_drive_offer:  "Ask if they want a scenic drive designed around their destination.",
+    flight_confirm:      "That's a long way — are they flying or driving?",
+    flight_intent:       "Ask: do they want help finding flights, or just plan what to do once they're there?",
   };
 
   const returnContext = isReturn
-    ? `\n\nThe user just returned from a flight/hotel search. Greet them back with 2–3 words max, then immediately ask the next question. Do NOT re-confirm anything already known.`
+    ? `\n\nThe user just returned from a flight/hotel search. Welcome them back in 2–3 words max, then ask the next question immediately.`
     : "";
 
   const instruction = nextField
-    ? `Your task: Ask ONE question — ${fieldHints[nextField] || "ask the most important missing detail"}. 1–2 sentences maximum. Direct, no filler.`
+    ? `Your task: Ask ONE question — ${fieldHints[nextField] || "ask the single most important missing detail"}. Sound like a knowledgeable friend, not a form. 1–2 sentences maximum.`
     : `All required fields are confirmed. Tell them you're ready to build their journey. 1 sentence only.`;
 
   const memorySection = profileHint
-    ? `\n\nUSER MEMORY (use only if genuinely relevant — never mechanical):\n${profileHint}`
+    ? `\n\nUSER MEMORY (use only if genuinely relevant):\n${profileHint}`
     : "";
 
-  const prompt = `You are TukaPath — a premium travel intelligence system. Not a chatbot.
+  const prompt = `You are TukaPath — a smart travel companion, not a chatbot or booking system.
 
 Current trip state:
 ${stateDesc || "(nothing captured yet)"}${memorySection}${returnContext}
 
 ${instruction}
 
-PART 26 — MANDATORY STYLE RULES (no exceptions):
-BANNED OPENERS — never use these, ever:
-  "I see" / "I understand" / "Got it" (alone) / "Sure thing" / "Absolutely" / "Of course" / "That sounds great" / "Makes sense" (alone) / "No problem" / "Happy to help"
+STYLE RULES — no exceptions:
+BANNED OPENERS: "I see" / "I understand" / "Got it" (alone) / "Sure thing" / "Absolutely" / "Of course" / "That sounds great" / "Makes sense" / "No problem" / "Happy to help" / "Great choice"
 
-ACKNOWLEDGEMENT RULE:
-- If the state has route/mode/duration info: lead with a SPECIFIC restatement of that content, then ask the question.
-  GOOD: "Edinburgh to Birmingham via the Lake District — motorbike and scenic. How long is the trip?"
-  GOOD: "2 weeks from Amsterdam to Edinburgh — solid road trip. Driving?"
-  BAD: "Got it! That sounds great. I understand. Makes sense!"
-- If the state is empty or only has 1 field: ask the question directly with no preamble.
-- Never repeat the user's words verbatim without adding value.
-- Never ask for information already in the state.
-- No exclamation marks in question sentences.
-- One thought per message. Maximum 2 sentences.`;
+GOOD STYLE:
+- If you know origin + destination: lead with that, then ask. "Edinburgh to London — driving or flying?"
+- If you know only origin: "From Edinburgh — where are you heading?"  
+- If nothing is known yet: ask the question directly, no preamble.
+- Ask about PEOPLE and CONTEXT when relevant: "Anyone joining you?" / "Is this for yourself or a group?"
+- If user mentions a person or friend: ask where they are based — it changes hotel and routing decisions.
+- Never repeat the user's words verbatim without adding insight.
+- Never ask for something already in the state.
+- No exclamation marks.
+- Maximum 2 sentences.`;
 
   try {
     const res = await base44.integrations.Core.InvokeLLM({ prompt });
@@ -631,6 +630,16 @@ export default function ConciergeChat({ onBuild, building, error }) {
         addMsg({ type: "flight_router", origin: iOrigin, destination: iDest });
         setChipsDisabled(false);
         return;
+      }
+
+      if (intent === "MULTI_LEG_INTENT") {
+        // Multi-city trip — flights are sorted, user wants experience planning
+        // Extract cities and build anchor chain, then continue normal pipeline
+        setThinking(false);
+        addMsg({ type: "assistant", text: "Multi-city trip — I'll plan what to do in each place. Which city are you starting from?" });
+        setChipsDisabled(false);
+        // Continue into normal journey pipeline with the input
+        // so state machine can extract the cities
       }
 
       // ── JOURNEY PATH: continue existing pipeline ──────────────────────────
