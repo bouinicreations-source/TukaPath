@@ -175,6 +175,7 @@ export async function extractJourneyEntities(userText) {
       },
     });
 
+    
     const r = result || {};
     return {
       origin:                 r.origin          || null,

@@ -111,7 +111,47 @@ async function handleTranscribeAudio(body, env) {
   }
 }
 
-async function handleGetUserProfile(body, env, user) {
+async function handleIntelligenceCall(body, env) {
+  const { prompt, model = 'gpt-4o' } = body;
+  if (!prompt) return err('prompt required');
+  if (!env.OPENAI_API_KEY) return err('OpenAI key not configured', 500);
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 2000,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'You are a travel intelligence engine. Always respond with valid JSON only.' },
+          { role: 'user', content: prompt },
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const e = await res.text();
+      return err(`GPT-4o error: ${e}`, 502);
+    }
+
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content || '{}';
+
+    try {
+      return json(JSON.parse(text));
+    } catch {
+      return err('Invalid JSON from GPT-4o', 502);
+    }
+  } catch (e) {
+    return err(`Intelligence call failed: ${e.message}`, 500);
+  }
+}
   if (!user) return json(null);
   try {
     const res = await fetch(
@@ -172,6 +212,8 @@ export default {
         return handleLLM(body, env);
       case 'resolveLocation':
         return handleResolveLocation(body, env);
+      case 'intelligenceCall':
+        return handleIntelligenceCall(body, env);
       case 'transcribeAudio':
         return handleTranscribeAudio(body, env);
       case 'getUserProfile':

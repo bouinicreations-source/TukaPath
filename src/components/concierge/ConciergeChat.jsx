@@ -2,16 +2,12 @@
  * ConciergeChat.jsx
  * Persistent chat-based planning assistant.
  *
- * Architecture:
- *   1. Every user message → extractJourneyEntities (LLM extraction)
- *   2. Extraction → mergeExtraction (state machine, immutable merge)
- *   3. getNextRequiredField (planning gate — what to ask next)
- *   4. AI acknowledgement generated from state description only
- *   5. When state is complete → show inline recap card
- *   6. User confirms → call onBuild
- *
- * The chat thread is always scrollable. Recap card appears inline in thread.
- * Input composer is pinned at bottom.
+ * Architecture (NEW — GPT-4o intelligence layer):
+ *   1. Every user message → processMessage (GPT-4o extraction + response)
+ *   2. Result merged into running state via mergeIntelligenceResult
+ *   3. GPT-4o suggested_response displayed directly
+ *   4. When planning_ready=true → show recap card
+ *   5. User confirms → call onBuild
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -19,20 +15,9 @@ import { supabase } from '@/api/supabase';
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Loader2, Mic, MicOff, RotateCcw, ChevronRight } from "lucide-react";
 import { base44 } from "@/api/client";
-import { extractJourneyEntities } from "@/lib/journeyExtractor";
-import { classifyInputClass, getFrustrationResponse } from "@/lib/inputClassifier";
-import {
-  createEmptyState,
-  mergeExtraction,
-  getNextRequiredField,
-  buildStateDescription,
-  getLocalMobilityCharacter,
-} from "@/lib/journeyStateMachine";
-import { detectArchetype, ARCHETYPE_LABELS } from "@/lib/archetypeEngine";
-import { scoreState } from "@/lib/confidenceScorer";
+import { processMessage, mergeIntelligenceResult } from "@/lib/conciergeIntelligence";
 import { normalizeVoiceInput } from "@/lib/parseJourneyInput";
-import { normalizeSemantics, applySemanticSignals } from "@/lib/semanticNormalizer";
-import { loadUserProfile, saveUserProfile, updateProfileFromJourney, buildProfileHint } from "@/lib/userBehaviorProfile";
+import { loadUserProfile, buildProfileHint } from "@/lib/userBehaviorProfile";
 import { classifyIntent } from "@/lib/intentClassifier";
 import { getNextCQEQuestion, applyCQEAnswer } from "@/lib/contextualQuestionEngine";
 import FlightRouterCard from "./FlightRouterCard";
@@ -526,256 +511,63 @@ export default function ConciergeChat({ onBuild, building, error }) {
   const processInput = useCallback(async (userText) => {
     if (!userText.trim() || thinking) return;
 
-    // Disable chips, add user bubble
     setChipsDisabled(true);
     removeChips();
     addMsg({ type: "user", text: userText });
     setThinking(true);
     setInput("");
 
-    // ── RESUME SIGNAL — check BEFORE input classification (Part 18 Rule 5 / Part 20) ──
-    // "done", "back", "I'm back", "returned" must restore full state and continue from next field.
-    // This must run BEFORE CLASS_D check because "done" / "ok" would be swallowed as trivial.
-    if (/\b(i('m| am) back|back|done|returned|i'?m here|finished|all done)\b/i.test(userText)) {
-      const savedRaw = sessionStorage.getItem("tp_concierge_state");
-      let resumeState = stateRef.current;
-      if (savedRaw) {
-        try {
-          const parsed = JSON.parse(savedRaw);
-          if (parsed?.origin || parsed?.destination) resumeState = parsed;
-        } catch {}
-      }
-      const hasContext = resumeState.origin || resumeState.destination;
-      if (hasContext) {
-        // Restore state in case it drifted
-        setJourneyState(resumeState);
-        const nextField   = getNextRequiredField(resumeState);
-        const stateDesc   = buildStateDescription(resumeState);
-        const profileHint = buildProfileHint(userProfile);
-        generateAck(stateDesc, nextField, userText, profileHint, true).then(ackText => {
-          setThinking(false);
-          addMsg({ type: "assistant", text: ackText });
-          if (nextField === null) {
-            setShowRecap(true);
-            addMsg({ type: "recap", state: resumeState });
-          } else {
-            const qDef = QUESTIONS[nextField];
-            if (qDef?.chips?.length) addMsg({ type: "chips", field: nextField, chips: qDef.chips });
-            setChipsDisabled(false);
-          }
-        });
-        return;
-      }
-    }
-
-    // ── INPUT CLASSIFICATION (Part 2) ────────────────────────────────────────
-    const inputClass = classifyInputClass(userText);
-
-    // Class C — frustration / emotional — NEVER parse as journey data
-    if (inputClass === "CLASS_C") {
-      setThinking(false);
-      addMsg({ type: "assistant", text: getFrustrationResponse(stateRef.current) });
-      setChipsDisabled(false);
-      return;
-    }
-
-    // Class D — trivial confirmation — treat as agreement with current state
-    if (inputClass === "CLASS_D") {
-      const currentState = stateRef.current;
-      const nextField = getNextRequiredField(currentState);
-      // If there's a next field to ask about, proceed to it
-      if (nextField !== null) {
-        const stateDesc = buildStateDescription(currentState);
-        const profileHint = buildProfileHint(userProfile);
-        generateAck(stateDesc, nextField, userText, profileHint, false).then(ackText => {
-          setThinking(false);
-          addMsg({ type: "assistant", text: ackText });
-          const qDef = QUESTIONS[nextField];
-          if (qDef?.chips?.length) addMsg({ type: "chips", field: nextField, chips: qDef.chips });
-          setChipsDisabled(false);
-        });
-        return;
-      }
-      // If state is complete, show recap
-      if (currentState.origin || currentState.destination) {
-        setThinking(false);
-        addMsg({ type: "assistant", text: "Everything looks good — take a look at the summary below." });
-        setShowRecap(true);
-        addMsg({ type: "recap", state: currentState });
-        setChipsDisabled(false);
-        return;
-      }
-      // No state yet — treat as Class A
-    }
-
-    // Class E — meta-conversation
-    if (inputClass === "CLASS_E") {
-      setThinking(false);
-      addMsg({ type: "assistant", text: "I help you plan road trips, multi-day journeys, and scenic drives — just tell me where you're going." });
-      setChipsDisabled(false);
-      return;
-    }
-
-    // Detect "start over"
+    // ── START OVER ────────────────────────────────────────────────────────────
     if (/\b(start over|new trip|reset|begin again)\b/i.test(userText)) {
-      const fresh = createEmptyState();
-      setJourneyState(fresh);
+      setJourneyState({});
       inputHistoryRef.current = [];
-      questionsAskedRef.current = 0;
       sessionStorage.removeItem("tp_concierge_state");
       setShowRecap(false);
-      setTimeout(() => {
-        setThinking(false);
-        addMsg({ type: "assistant", text: "Sure — let's start fresh. Tell me about your next trip." });
-        setChipsDisabled(false);
-      }, 400);
+      setThinking(false);
+      addMsg({ type: "assistant", text: "Fresh start. Where are we going?" });
+      setChipsDisabled(false);
       return;
     }
 
     try {
-      // ── INTENT GATE: classify before any LLM work ─────────────────────────
-      const { intent, origin: iOrigin, destination: iDest } = classifyIntent(userText);
+      // ── BUILD CONVERSATION HISTORY for context ────────────────────────────
+      const history = messagesRef.current
+        .filter(m => m.type === "user" || m.type === "assistant")
+        .slice(-8) // last 8 messages for context
+        .map(m => ({ role: m.type, text: m.text }));
 
-      if (intent === "FLIGHT_INTENT") {
-        setThinking(false);
-        addMsg({ type: "assistant", text: iOrigin && iDest
-          ? `${iOrigin} to ${iDest} — flights or the trip itself?`
-          : "Flight trip — want help finding the flight, or just plan what you'll do once you're there?" });
-        addMsg({ type: "flight_router", origin: iOrigin, destination: iDest });
-        setChipsDisabled(false);
-        return;
-      }
+      // ── CALL GPT-4o INTELLIGENCE LAYER ───────────────────────────────────
+      const result = await processMessage(userText, history, stateRef.current);
 
-      if (intent === "HYBRID_INTENT") {
-        setThinking(false);
-        addMsg({ type: "assistant", text: "Flying there, then exploring — sort the flight first, or jump straight to planning the ground trip?" });
-        addMsg({ type: "flight_router", origin: iOrigin, destination: iDest });
-        setChipsDisabled(false);
-        return;
-      }
-
-      if (intent === "MULTI_LEG_INTENT") {
-        // Multi-city trip — flights are sorted, user wants experience planning
-        // Do NOT interrupt — fall through to normal extraction pipeline
-        // The state machine will extract cities, dates, durations from the input
-        // Only add a brief acknowledgement if we haven't already greeted them
-        const hasState = stateRef.current?.origin || stateRef.current?.destination;
-        if (!hasState) {
-          // First message — acknowledge and continue to extraction below
-          // Don't return — let the pipeline run
-        }
-        // Fall through to journey extraction pipeline
-      }
-
-      // ── JOURNEY PATH: continue existing pipeline ──────────────────────────
-      // Track raw input for CQE implied signal detection
-      inputHistoryRef.current = [...inputHistoryRef.current, userText];
-
-      // Step 1a: Semantic normalization (deterministic, no AI)
-      const semanticSignals = normalizeSemantics(userText);
-
-      // Step 1b: LLM extraction
-      const rawExtraction = await extractJourneyEntities(userText);
-
-      // Step 1c: Merge semantic signals into extraction (fills gaps only)
-      const extraction = applySemanticSignals(rawExtraction, semanticSignals);
-
-      // Step 2: Merge into state
-      const currentState = stateRef.current;
-      const nextState    = mergeExtraction(currentState, extraction);
-
-      // Ensure planning_intent defaults to FULL_PLANNING_REQUIRED if user described a route
-      if (!nextState.planning_intent && (nextState.origin || nextState.destination)) {
-        nextState.planning_intent = "FULL_PLANNING_REQUIRED";
-      }
-
+      // ── MERGE RESULT INTO STATE ───────────────────────────────────────────
+      const nextState = mergeIntelligenceResult(stateRef.current, result);
       setJourneyState(nextState);
 
-      // Step 2b: Evaluate archetype (Part 5) — silent, used for planning profile
-      nextState._archetype = detectArchetype(nextState);
+      // ── DISPLAY RESPONSE ──────────────────────────────────────────────────
+      const response = result.suggested_response;
 
-      // Step 2c: Confidence score (Part 4)
-      const scoreResult = scoreState(nextState);
-
-      // Step 3: Check required fields
-      const nextField = getNextRequiredField(nextState);
-
-      // CONFIDENCE SHORTCUT (Part 4): score >= 0.70 AND duration HIGH → skip straight to recap
-      if (scoreResult.ready_for_recap && nextField === null) {
-        const stateDesc   = buildStateDescription(nextState);
-        const profileHint = buildProfileHint(userProfile);
-        const ackText     = await generateAck(stateDesc, null, userText, profileHint, false);
+      if (!response) {
+        // Fallback if GPT fails
+        addMsg({ type: "assistant", text: "Could you tell me a bit more about where you're heading?" });
         setThinking(false);
-        addMsg({ type: "assistant", text: ackText });
-        setShowRecap(true);
-        addMsg({ type: "recap", state: nextState });
         setChipsDisabled(false);
         return;
       }
 
-      // Step 4: If all required fields done, check CQE before showing recap
-      if (nextField === null) {
-        const cqe = await getNextCQEQuestion(
-          nextState,
-          nextState.cqe_questions_asked || [],
-          inputHistoryRef.current
-        );
+      setThinking(false);
+      addMsg({ type: "assistant", text: response });
 
-        if (cqe) {
-          // Mark this CQE question as asked
-          const updatedState = {
-            ...nextState,
-            cqe_questions_asked: [...(nextState.cqe_questions_asked || []), cqe.id],
-          };
-          setJourneyState(updatedState);
-
-          const stateDesc   = buildStateDescription(updatedState);
-          const profileHint = buildProfileHint(userProfile);
-          const ackText     = await generateAck(stateDesc, null, userText, profileHint, false);
-          setThinking(false);
-          addMsg({ type: "assistant", text: cqe.question });
-          if (cqe.chips?.length) {
-            addMsg({ type: "chips", field: `cqe_${cqe.state_field}`, chips: cqe.chips.map(c => ({ ...c, cqe_state_field: cqe.state_field })) });
-          }
-          setChipsDisabled(false);
-        } else {
-          // No CQE question — go straight to recap
-          const stateDesc   = buildStateDescription(nextState);
-          const profileHint = buildProfileHint(userProfile);
-          const ackText     = await generateAck(stateDesc, null, userText, profileHint, false);
-          setThinking(false);
-          addMsg({ type: "assistant", text: ackText });
-          setShowRecap(true);
-          addMsg({ type: "recap", state: nextState });
-        }
+      // ── IF PLANNING READY — show recap ────────────────────────────────────
+      if (result.planning_ready && (nextState.anchor_chain?.length > 0 || nextState.destinations?.length > 0)) {
+        setShowRecap(true);
+        addMsg({ type: "recap", state: nextState });
       } else {
-        // Step 4b: Still collecting required fields
-        // Part 19: Max 3 questions before recap — after that, show recap with assumptions
-        questionsAskedRef.current += 1;
-        const stateDesc   = buildStateDescription(nextState);
-        const profileHint = buildProfileHint(userProfile);
-
-        if (questionsAskedRef.current > 3 && (nextState.origin || nextState.destination)) {
-          // Force recap after 3 questions — show assumptions for remaining fields
-          const ackText = await generateAck(stateDesc, null, userText, profileHint, false);
-          setThinking(false);
-          addMsg({ type: "assistant", text: ackText });
-          setShowRecap(true);
-          addMsg({ type: "recap", state: nextState });
-        } else {
-          const ackText = await generateAck(stateDesc, nextField, userText, profileHint, false);
-          setThinking(false);
-          addMsg({ type: "assistant", text: ackText });
-          const qDef = QUESTIONS[nextField];
-          if (qDef?.chips?.length) {
-            addMsg({ type: "chips", field: nextField, chips: qDef.chips });
-          }
-        }
         setChipsDisabled(false);
       }
-    } catch {
+
+    } catch (e) {
       setThinking(false);
-      addMsg({ type: "assistant", text: "Sorry, I had trouble understanding that. Could you try again?" });
+      addMsg({ type: "assistant", text: "Something went wrong. Could you try again?" });
       setChipsDisabled(false);
     }
   }, [thinking, addMsg, removeChips]);
