@@ -16,6 +16,7 @@ function isProfileIncomplete(u) {
   return !meta.first_name && !meta.last_name;
 }
 
+
 export function AuthProvider({ children }) {
   const [user, setUser]                       = useState(null);
   const [isGuest, setIsGuest]                 = useState(false);

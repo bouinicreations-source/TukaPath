@@ -24,6 +24,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
+
 // Minimal push-pin: circle head + thin needle
 function makePin(color = "#ef4444", scale = 1, pulse = false) {
   const r = Math.round(5 * scale);   // circle radius

@@ -14,6 +14,7 @@
  * Input composer is pinned at bottom.
  */
 
+
 import { useState, useRef, useEffect, useCallback } from "react";
 import { supabase } from '@/api/supabase';
 import { motion, AnimatePresence } from "framer-motion";

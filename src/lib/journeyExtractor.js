@@ -33,6 +33,7 @@ export const EMPTY_EXTRACTION = {
   },
 };
 
+
 const EXTRACTION_PROMPT = `You are a deterministic travel intent parser for TukaPath.
 
 GOLDEN RULE: Extract ONLY what is explicitly stated in the user input.
