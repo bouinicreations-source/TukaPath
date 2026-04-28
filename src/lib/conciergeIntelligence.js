@@ -245,6 +245,8 @@ export async function processMessage(userMessage, conversationHistory = [], curr
       model: 'gpt-4o',
     });
 
+    console.log('[intelligence] raw result:', result);
+
     if (!result || result.error) {
       throw new Error(result?.error || 'Intelligence call failed');
     }
@@ -254,8 +256,7 @@ export async function processMessage(userMessage, conversationHistory = [], curr
 
     return result;
   } catch (e) {
-    console.error('[conciergeIntelligence] Error:', e.message);
-    // Return minimal fallback — never crash the UI
+    console.error('[conciergeIntelligence] Error:', e.message, e);
     return {
       extraction: {
         anchor_chain: [],
@@ -264,7 +265,7 @@ export async function processMessage(userMessage, conversationHistory = [], curr
         blocking_questions: [],
         currently_traveling: false,
       },
-      suggested_response: null, // caller handles null by using fallback
+      suggested_response: null,
       planning_ready: false,
       error: e.message,
     };
