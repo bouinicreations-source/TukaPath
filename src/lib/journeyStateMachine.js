@@ -13,7 +13,7 @@ function rank(conf) {
   return CONF_RANK[conf] ?? 0;
 }
 
-// ── Initial empty state ──────────────────────────────────────────────────────
+// ── Initial empty state ─────────────────────────────────────────────────────
 export function createEmptyState() {
   return {
     origin:               null,   // string | null
@@ -51,6 +51,15 @@ export function createEmptyState() {
     style:                    null,   // "scenic" | "cultural" | "food" | "mixed"
     drive_duration_preference: null, // "short" | "medium" | "long"
     cqe_questions_asked:      [],    // string[] — ids of CQE questions already presented
+    // ── Live trip + human context ────────────────────────────────────────────
+    is_currently_traveling:   false,
+    current_time_hint:        null,
+    arrival_time_hint:        null,
+    city_durations:           [],    // [{city, days, arrival_time}]
+    companions:               [],    // [{name, relation, location, emotional_weight}]
+    group_energy:             null,
+    split_after:              null,
+    split_details:            null,
   };
 }
 
@@ -182,6 +191,48 @@ export function mergeExtraction(currentState, extraction) {
     next.preferences = dedupeArr([...currentState.preferences, ...extraction.preferences]);
   }
 
+  // ── Live trip and human context fields ───────────────────────────────────
+  if (extraction.is_currently_traveling) {
+    next.is_currently_traveling = true;
+  }
+  if (extraction.current_time_hint && !currentState.current_time_hint) {
+    next.current_time_hint = extraction.current_time_hint;
+  }
+  if (extraction.arrival_time_hint && !currentState.arrival_time_hint) {
+    next.arrival_time_hint = extraction.arrival_time_hint;
+  }
+  if (extraction.city_durations?.length) {
+    // Merge city durations — add new cities, don't overwrite existing
+    const existing = new Set((currentState.city_durations || []).map(c => c.city?.toLowerCase()));
+    const newCities = extraction.city_durations.filter(c => !existing.has(c.city?.toLowerCase()));
+    next.city_durations = [...(currentState.city_durations || []), ...newCities];
+    // Auto-calculate total duration_days from city_durations if not set
+    if (!next.duration_days && next.city_durations.length > 0) {
+      const total = next.city_durations.reduce((sum, c) => sum + (c.days || 0), 0);
+      if (total > 0) {
+        next.duration_days = total;
+        next.duration_type = "days";
+        next.duration_conf = "high";
+      }
+    }
+  }
+  if (extraction.companions?.length) {
+    const existingNames = new Set((currentState.companions || []).map(c => c.name?.toLowerCase()));
+    const newCompanions = extraction.companions.filter(c => !existingNames.has(c.name?.toLowerCase()));
+    next.companions = [...(currentState.companions || []), ...newCompanions];
+  }
+  if (extraction.group_energy && !currentState.group_energy) {
+    next.group_energy = extraction.group_energy;
+  }
+  if (extraction.split_after && !currentState.split_after) {
+    next.split_after  = extraction.split_after;
+    next.split_details = extraction.split_details || null;
+  }
+  // Auto-set trip_type to multi_leg if we have multiple anchors
+  if (!next.trip_type && next.anchors?.length >= 2) {
+    next.trip_type = "multi_leg";
+  }
+
   // ── POST-MERGE: auto-promote trip_type to MULTI_DAY ──────────────────────
   // If duration implies multi-day but trip_type is still point_to_point, promote it.
   // This must happen AFTER all field merges so the final duration value is used.
@@ -301,8 +352,21 @@ export function getLocalMobilityCharacter(state) {
 export function getNextRequiredField(state) {
   const isLongDistance = isLongDistanceRoute(state);
 
+  // MULTI-LEG SHORT CIRCUIT — if we have anchors with durations, we have enough
+  // Never block a multi-leg trip on duration if city_durations are present
+  const hasMultiLegData = (state.anchors?.length >= 1) &&
+    (state.city_durations?.length > 0 || state.duration_days);
+  if (hasMultiLegData && state.trip_type === "multi_leg") return null;
+
+  // LIVE TRIP SHORT CIRCUIT — user is currently traveling, skip interrogation
+  // They gave us the context we need, just plan it
+  if (state.is_currently_traveling && state.anchors?.length >= 1) return null;
+
   // PRIORITY 1 — Duration always blocking (Clause 1)
-  if (!state.duration_type) return "duration";
+  // EXCEPTION: if we have city_durations summing to a real number, use that
+  const hasDuration = state.duration_type ||
+    (Array.isArray(state.city_durations) && state.city_durations.length > 0);
+  if (!hasDuration) return "duration";
 
   // PRIORITY 2 — Destination (unless loop/exploration/MULTI_DAY with destination known)
   const tripTypeKnown = state.trip_type === "loop" || state.trip_type === "exploration";
@@ -399,6 +463,23 @@ export function buildStateDescription(state) {
   if (state.drive_duration_preference) parts.push(`drive leg length: ${state.drive_duration_preference}`);
   if (state.preferences?.length) parts.push(`preferences: ${state.preferences.join(", ")}`);
   if (state.planning_intent) parts.push(`intent: ${state.planning_intent}`);
+
+  // ── Live trip and human context ──────────────────────────────────────────
+  if (state.is_currently_traveling) parts.push("STATUS: user is currently in transit right now");
+  if (state.current_time_hint) parts.push(`current time: ${state.current_time_hint}`);
+  if (state.arrival_time_hint) parts.push(`arrival time hint: ${state.arrival_time_hint}`);
+  if (state.group_energy) parts.push(`group energy: ${state.group_energy}`);
+  if (state.city_durations?.length) {
+    const cd = state.city_durations.map(c => `${c.city}: ${c.days} day${c.days !== 1 ? "s" : ""}`).join(", ");
+    parts.push(`city durations: ${cd}`);
+  }
+  if (state.companions?.length) {
+    const comp = state.companions.map(c =>
+      `${c.name} (${c.relation}${c.location ? ` in ${c.location}` : ""}${c.emotional_weight ? `, ${c.emotional_weight}` : ""})`
+    ).join(", ");
+    parts.push(`people: ${comp}`);
+  }
+  if (state.split_after) parts.push(`group splits at: ${state.split_after} — ${state.split_details || ""}`);
 
   return parts.join(" | ");
 }

@@ -14,7 +14,6 @@
  * Input composer is pinned at bottom.
  */
 
-
 import { useState, useRef, useEffect, useCallback } from "react";
 import { supabase } from '@/api/supabase';
 import { motion, AnimatePresence } from "framer-motion";
@@ -151,19 +150,41 @@ ${stateDesc || "(nothing captured yet)"}${memorySection}${returnContext}
 
 ${instruction}
 
-STYLE RULES — no exceptions:
-BANNED OPENERS: "I see" / "I understand" / "Got it" (alone) / "Sure thing" / "Absolutely" / "Of course" / "That sounds great" / "Makes sense" / "No problem" / "Happy to help" / "Great choice"
+CRITICAL CONTEXT RULES — read these carefully:
+
+1. IS_CURRENTLY_TRAVELING: If the state shows the user is on a plane or in transit RIGHT NOW:
+   - Do NOT ask about flights or transport — they are already traveling
+   - Acknowledge they are on the way
+   - Calculate approximate arrival time if current_time_hint and arrival_time_hint are present
+   - Reference the group context (wife asleep, will be energetic, etc.)
+   - Move straight to planning what to do TODAY
+
+2. COMPANIONS: If named people are in the state:
+   - Reference them by name naturally
+   - Use emotional weight — "miss_them" means say something warm about seeing them
+   - Ask about logistics that affect the plan (where do they live, when are they free)
+   - Do NOT ask "who are you traveling with" if companions are already extracted
+
+3. MULTI-LEG: If anchors has multiple cities:
+   - Acknowledge the full route in one sentence
+   - Focus on the FIRST city — that is what needs planning now
+   - Reference the departure constraint if present (train at 10 AM etc.)
+
+4. GROUP ENERGY: If group_energy is present:
+   - Use it. "Wife will be full of life on arrival" → plan for energy, not a slow start
+
+5. SPLIT PLANS: If split_after is present:
+   - Note it briefly. "After London your wife heads to Peterborough" — show you know the full picture
+
+STYLE RULES:
+BANNED OPENERS: "I see" / "I understand" / "Got it" (alone) / "Sure thing" / "Absolutely" / "Of course" / "That sounds great" / "Makes sense" / "No problem" / "Happy to help"
 
 GOOD STYLE:
-- If you know origin + destination: lead with that, then ask. "Edinburgh to London — driving or flying?"
-- If you know only origin: "From Edinburgh — where are you heading?"  
-- If nothing is known yet: ask the question directly, no preamble.
-- Ask about PEOPLE and CONTEXT when relevant: "Anyone joining you?" / "Is this for yourself or a group?"
-- If user mentions a person or friend: ask where they are based — it changes hotel and routing decisions.
-- Never repeat the user's words verbatim without adding insight.
-- Never ask for something already in the state.
-- No exclamation marks.
-- Maximum 2 sentences.`;
+- Lead with what you know, then ask what you need
+- Reference specific details from their message — names, times, feelings
+- One question maximum
+- Maximum 3 sentences
+- No exclamation marks`;
 
   try {
     const res = await base44.integrations.Core.InvokeLLM({ prompt });

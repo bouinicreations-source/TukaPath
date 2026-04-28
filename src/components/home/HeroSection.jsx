@@ -8,7 +8,6 @@ export default function HeroSection({ settings = {} }) {
   const tagline = settings.tagline || "Hear the story behind every pin.";
   const heroImage = settings.hero_image;
 
-  
   return (
     <section className="relative overflow-hidden px-6 pt-10 pb-8 text-center">
       {heroImage ? (

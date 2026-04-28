@@ -32,7 +32,6 @@ const JOURNEY_PATTERNS = [
   /\bday\s+trip\b/i,
 ];
 
-
 // Pairs that are geographically far apart — likely flight unless user says drive
 const FAR_PAIRS = [
   ["doha", "london"], ["doha", "edinburgh"], ["doha", "paris"], ["doha", "rome"],

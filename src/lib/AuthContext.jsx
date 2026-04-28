@@ -9,7 +9,6 @@ function attachRole(u) {
   return u;
 }
 
-
 function isProfileIncomplete(u) {
   if (!u) return false;
   const meta = u?.user_metadata || {};
