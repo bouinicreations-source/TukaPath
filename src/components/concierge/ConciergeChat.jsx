@@ -17,10 +17,7 @@ import { Send, Loader2, Mic, MicOff, RotateCcw, ChevronRight } from "lucide-reac
 import { base44 } from "@/api/client";
 import { processMessage, mergeIntelligenceResult } from "@/lib/conciergeIntelligence";
 import { normalizeVoiceInput } from "@/lib/parseJourneyInput";
-import { loadUserProfile, buildProfileHint } from "@/lib/userBehaviorProfile";
-import { classifyIntent } from "@/lib/intentClassifier";
-import { getNextCQEQuestion, applyCQEAnswer } from "@/lib/contextualQuestionEngine";
-import FlightRouterCard from "./FlightRouterCard";
+import { loadUserProfile, buildProfileHint } from "@/lib/userBehaviorProfile";import FlightRouterCard from "./FlightRouterCard";
 
 // ── Question definitions ──────────────────────────────────────────────────────
 const QUESTIONS = {
@@ -414,7 +411,7 @@ export default function ConciergeChat({ onBuild, building, error }) {
   const [thinking, setThinking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
-  const [journeyState, setJourneyState] = useState(createEmptyState());
+  const [journeyState, setJourneyState] = useState({});
   const [showRecap, setShowRecap]       = useState(false);
   const [chipsDisabled, setChipsDisabled] = useState(false);
   const [userProfile, setUserProfile]   = useState(null);
@@ -637,47 +634,29 @@ export default function ConciergeChat({ onBuild, building, error }) {
     addMsg({ type: "user", text: chip.label });
     setThinking(true);
 
-    // Check next field
-    const nextField = getNextRequiredField(nextState);
+    // Use intelligence layer for chip responses too
+    const history = messagesRef.current
+      .filter(m => m.type === "user" || m.type === "assistant")
+      .slice(-6)
+      .map(m => ({ role: m.type, text: m.text }));
 
-    const stateDesc   = buildStateDescription(nextState);
-    const profileHint = buildProfileHint(userProfile);
-
-    if (nextField === null) {
-      // All required fields done — check CQE before recap
-      getNextCQEQuestion(nextState, nextState.cqe_questions_asked || [], inputHistoryRef.current).then(cqe => {
-        if (cqe) {
-          const updatedState = {
-            ...nextState,
-            cqe_questions_asked: [...(nextState.cqe_questions_asked || []), cqe.id],
-          };
-          setJourneyState(updatedState);
-          setThinking(false);
-          addMsg({ type: "assistant", text: cqe.question });
-          if (cqe.chips?.length) {
-            addMsg({ type: "chips", field: `cqe_${cqe.state_field}`, chips: cqe.chips.map(c => ({ ...c, cqe_state_field: cqe.state_field })) });
-          }
-          setChipsDisabled(false);
-        } else {
-          generateAck(stateDesc, null, syntheticText, profileHint, false).then(ackText => {
-            setThinking(false);
-            addMsg({ type: "assistant", text: ackText });
-            setShowRecap(true);
-            addMsg({ type: "recap", state: nextState });
-          });
-        }
-      });
-    } else {
-      generateAck(stateDesc, nextField, syntheticText, profileHint, false).then(ackText => {
-        setThinking(false);
-        addMsg({ type: "assistant", text: ackText });
-        const qDef = QUESTIONS[nextField];
-        if (qDef?.chips?.length) {
-          addMsg({ type: "chips", field: nextField, chips: qDef.chips });
-        }
+    processMessage(chip.label, history, nextState).then(result => {
+      const merged = mergeIntelligenceResult(nextState, result);
+      setJourneyState(merged);
+      const response = result.suggested_response || "Got it — anything else to add before I build the plan?";
+      setThinking(false);
+      addMsg({ type: "assistant", text: response });
+      if (result.planning_ready && (merged.anchor_chain?.length > 0 || merged.destinations?.length > 0)) {
+        setShowRecap(true);
+        addMsg({ type: "recap", state: merged });
+      } else {
         setChipsDisabled(false);
-      });
-    }
+      }
+    }).catch(() => {
+      setThinking(false);
+      addMsg({ type: "assistant", text: "Got it — what else can you tell me?" });
+      setChipsDisabled(false);
+    });
   }, [addMsg, removeChips]);
 
   // ── Handle edit (dismiss recap, let user keep chatting) ──────────────────
@@ -720,7 +699,6 @@ export default function ConciergeChat({ onBuild, building, error }) {
       addMsg({ type: "user", text: "Plan my trip after landing" });
       // Pre-seed the journey state with destination and flight mode
       const nextState = {
-        ...createEmptyState(),
         destination: destination || null,
         destination_conf: destination ? "high" : "low",
         origin: origin || null,

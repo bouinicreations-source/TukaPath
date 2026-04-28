@@ -152,16 +152,28 @@ async function handleIntelligenceCall(body, env) {
     return err(`Intelligence call failed: ${e.message}`, 500);
   }
 }
+
+async function handleGetUserProfile(body, env, user) {
   if (!user) return json(null);
+
   try {
     const res = await fetch(
       `${env.SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${user.id}&select=*`,
-      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+      {
+        headers: {
+          apikey: env.SUPABASE_SERVICE_KEY,
+          Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+        },
+      }
     );
+
     const data = await res.json();
     return json(Array.isArray(data) ? data[0] || null : data);
-  } catch { return json(null); }
+  } catch {
+    return json(null);
+  }
 }
+
 
 async function handleUpdateUserProfile(body, env, user) {
   if (!user) return json(null);
