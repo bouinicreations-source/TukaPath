@@ -641,7 +641,7 @@ export async function buildConciergeJourney(body, env, user) {
   });
 
   try {
-    const { user_input, clarification_answer, refinements, existing_plan, duration_days, stage_requested = 'full' } = body;
+    const { user_input, clarification_answer, refinements, existing_plan, duration_days, stage_requested = 'full', anchor_cities, city_durations } = body;
     if (!user_input && !existing_plan) return jsonRes({ error: 'user_input is required' }, 400);
 
     // ── STEP 1: Plan construction ─────────────────────────────────────────────
@@ -676,7 +676,17 @@ export async function buildConciergeJourney(body, env, user) {
         origin_exclusion_radius_km: 15, refinements_applied: [], assumptions: frontendPlan.assumptions || [],
       };
     } else {
-      plan = await buildStructuredPlan(env, user_input, clarification_answer, refinements, existing_plan);
+      // Build enriched prompt if we have anchor cities from the frontend state machine
+      let enrichedInput = user_input || '';
+      if (anchor_cities?.length > 0) {
+        const anchorStr = anchor_cities.join(' → ');
+        enrichedInput += `\n\nEXTRACTED ANCHOR CHAIN (use this exact order): ${anchorStr}`;
+      }
+      if (city_durations?.length > 0) {
+        const durStr = city_durations.map(c => `${c.city}: ${c.days} days`).join(', ');
+        enrichedInput += `\nCITY DURATIONS: ${durStr}`;
+      }
+      plan = await buildStructuredPlan(env, enrichedInput, clarification_answer, refinements, existing_plan);
     }
 
     if (plan.needs_clarification) return jsonRes({ phase: 'clarification', plan });
@@ -920,7 +930,10 @@ export async function buildConciergeJourney(body, env, user) {
       }));
     } catch {}
 
-    const journey = { journey_title: `${plan.origin_display || 'Your'} → ${plan.destination_display || 'journey'}`, summary: plan.summary_sentence, trip_type: plan.trip_type, mode: plan.mode, route_character: verified_route_character, route_character_honest, truth_note, pacing: plan.pacing, hard_constraints: hardConstraints, soft_constraints: softConstraints, temporal_anchors: temporalAnchors, constraint_valid: debug.validation_passed, resolved_origin: resolvedOrigin ? { display_name: resolvedOrigin.display_name, country: resolvedOrigin.country, lat: resolvedOrigin.lat, lng: resolvedOrigin.lng } : null, resolved_destination: resolvedDest ? { display_name: resolvedDest.display_name, country: resolvedDest.country, lat: resolvedDest.lat, lng: resolvedDest.lng } : null, total_distance_km: routeData?.distance_km ? Math.round(routeData.distance_km * 10) / 10 : null, total_duration_hours: routeData?.duration_minutes ? (routeData.duration_minutes / 60).toFixed(1) : null, saved_journey_id: savedJourney?.id || null, segments: finalSegments.map(seg => ({ ...seg, saved_leg_id: seg._saved_leg_id || null })), main_stops: allStops.filter(s => s.stop_role === 'main_highlight'), nav_waypoints: navWaypoints, export_url: exportUrl, result_status: resultStatus, partial_match_note: partialNote, debug };
+    const journey = {
+      journey_title: anchor_cities?.length > 0
+        ? `${plan.origin_display || 'Your'} → ${anchor_cities.join(' → ')}`
+        : `${plan.origin_display || 'Your'} → ${plan.destination_display || 'journey'}`, summary: plan.summary_sentence, trip_type: plan.trip_type, mode: plan.mode, route_character: verified_route_character, route_character_honest, truth_note, pacing: plan.pacing, hard_constraints: hardConstraints, soft_constraints: softConstraints, temporal_anchors: temporalAnchors, constraint_valid: debug.validation_passed, resolved_origin: resolvedOrigin ? { display_name: resolvedOrigin.display_name, country: resolvedOrigin.country, lat: resolvedOrigin.lat, lng: resolvedOrigin.lng } : null, resolved_destination: resolvedDest ? { display_name: resolvedDest.display_name, country: resolvedDest.country, lat: resolvedDest.lat, lng: resolvedDest.lng } : null, total_distance_km: routeData?.distance_km ? Math.round(routeData.distance_km * 10) / 10 : null, total_duration_hours: routeData?.duration_minutes ? (routeData.duration_minutes / 60).toFixed(1) : null, saved_journey_id: savedJourney?.id || null, segments: finalSegments.map(seg => ({ ...seg, saved_leg_id: seg._saved_leg_id || null })), main_stops: allStops.filter(s => s.stop_role === 'main_highlight'), nav_waypoints: navWaypoints, export_url: exportUrl, result_status: resultStatus, partial_match_note: partialNote, debug };
 
     return jsonRes({ phase: 'journey', plan, journey });
 

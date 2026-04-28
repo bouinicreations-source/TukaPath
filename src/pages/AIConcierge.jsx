@@ -49,49 +49,43 @@ export default function AIConcierge() {
         existing_plan: structuredPlan?.plan_status === "ready" ? structuredPlan : undefined,
         stage_requested: "full",
         target_stop_count: structuredPlan?._targetStopCount || null,
-        // Explicitly pass duration_days so backend doesn't have to re-parse free text
         duration_days: journeyState?.duration_days || structuredPlan?.duration_days || null,
+        // Pass anchor chain explicitly so worker does not re-parse incorrectly
+        anchor_cities: journeyState?.anchors?.length > 0 ? journeyState.anchors : undefined,
+        city_durations: journeyState?.city_durations?.length > 0 ? journeyState.city_durations : undefined,
       });
       const data = res;
       if (data?.journey) {
-        // ── PART 22 VALIDATION GATE ───────────────────────────────────────────
-        // Check segment count and daily distance before showing journey to user.
         const j = data.journey;
         const segs = j.segments || [];
         const totalKm = j.total_distance_km || 0;
         const durationDays = journeyState?.duration_days || structuredPlan?.duration_days || null;
         const MAX_KM_PER_DAY = 550;
 
-        // Gate 1: Multi-day trip needs >= 2 segments
         const needsMultiSeg = durationDays >= 2 || totalKm > MAX_KM_PER_DAY;
         const segFail = needsMultiSeg && segs.length < 2;
-
-        // Gate 2: Daily distance — total_km / segments must not exceed 550km/day
         const kmPerSeg = segs.length > 0 ? totalKm / segs.length : totalKm;
         const distFail = kmPerSeg > MAX_KM_PER_DAY;
-
-        // Gate 3: Minimum 2 stops per driving day (at least 2 stops total for multi-day)
         const totalStops = segs.reduce((s, seg) => s + (seg.stops || []).length, 0);
         const minStops = Math.max(2, (durationDays || 1) * 2);
         const stopFail = needsMultiSeg && totalStops < minStops;
 
         if (segFail || distFail || stopFail) {
-          // Validation failed — retry once with explicit constraints injected
           const failReason = segFail
             ? `Only ${segs.length} segment(s) returned for a ${Math.round(totalKm)}km trip. Must have at least 2.`
             : distFail
             ? `Daily distance ${Math.round(kmPerSeg)}km exceeds 550km limit. Must split into more legs.`
             : `Only ${totalStops} stops for a ${durationDays || 1}-day trip. Minimum is ${minStops}.`;
 
-          console.warn("[ValidationGate]", failReason, "— retrying with explicit constraints");
-
           const retryRes = await base44.functions.invoke("buildConciergeJourney", {
             user_input: prompt + `\n\nCRITICAL CONSTRAINTS: This is ${Math.round(totalKm)}km total. MUST have at least 2 segments (overnight required). MUST have at least ${minStops} stops total. Max 550km per day. Previous attempt failed: ${failReason}`,
             existing_plan: structuredPlan?.plan_status === "ready" ? structuredPlan : undefined,
             stage_requested: "full",
             duration_days: durationDays,
+            anchor_cities: journeyState?.anchors?.length > 0 ? journeyState.anchors : undefined,
+            city_durations: journeyState?.city_durations?.length > 0 ? journeyState.city_durations : undefined,
           });
-          const retryData = retryRes.data;
+          const retryData = retryRes; // worker returns JSON directly, no .data wrapper
           if (retryData?.journey) {
             clearStageTimers();
             setJourney(retryData.journey);
