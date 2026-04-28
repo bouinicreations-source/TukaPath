@@ -969,15 +969,29 @@ export default function ConciergeChat({ onBuild, building, error }) {
         setTranscribing(true);
         try {
           const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-          const file = new File([blob], "recording.webm", { type: "audio/webm" });
-          const { file_url } = await base44.integrations.Core.UploadFile({ file });
-          const res = await base44.functions.invoke("transcribeAudio", { file_url });
-          if (res?.data?.text) {
-            const normalized = normalizeVoiceInput(res.data.text);
-            setInput(prev => prev ? prev + " " + normalized : normalized);
-          }
-        } catch {}
-        setTranscribing(false);
+          // Convert to base64 and send directly to worker — no file upload needed
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            try {
+              const base64 = reader.result.split(",")[1];
+              const res = await base44.functions.invoke("transcribeAudio", {
+                audio_base64: base64,
+                mime_type: "audio/webm"
+              });
+              const text = res?.text || res?.data?.text || res;
+              if (text && typeof text === "string" && text.trim()) {
+                const normalized = normalizeVoiceInput(text.trim());
+                setInput(prev => prev ? prev + " " + normalized : normalized);
+              }
+            } catch (e) {
+              console.error("Transcription error:", e);
+            }
+            setTranscribing(false);
+          };
+          reader.readAsDataURL(blob);
+        } catch {
+          setTranscribing(false);
+        }
       };
       mr.start();
       mediaRecorderRef.current = mr;
