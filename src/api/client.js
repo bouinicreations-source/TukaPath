@@ -30,11 +30,30 @@ const auth = {
   }
 };
 
+// Explicit entity → table mappings for non-standard names
+const TABLE_MAP = {
+  location:             'locations',
+  location_suggestion:  'location_suggestion',
+  visa_feedback:        'visa_feedback',
+  discovery:            'discovery',
+  favorite:             'favorite',
+  story_play:           'story_play',
+  listen_later:         'listen_later',
+  user_profile:         'user_profiles',
+  onboarding_slide:     'onboarding_slide',
+  site_settings:        'site_settings',
+  journey:              'journeys',
+  journey_leg:          'journey_legs',
+  journey_stop:         'journey_stops',
+  journey_hotel:        'journey_hotels',
+};
+
 function tableFor(entityName) {
-  return entityName
+  const snake = entityName
     .replace(/([A-Z])/g, '_$1')
     .toLowerCase()
     .replace(/^_/, '');
+  return TABLE_MAP[snake] || snake;
 }
 
 function entityProxy(entityName) {
