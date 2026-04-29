@@ -423,6 +423,8 @@ export default function ConciergeChat({ onBuild, building, error }) {
   const chunksRef        = useRef([]);
   const stateRef         = useRef(journeyState); // always in sync
   stateRef.current       = journeyState;
+  const messagesRef      = useRef(messages);     // always in sync with messages
+  messagesRef.current    = messages;
   const inputHistoryRef  = useRef([]); // raw user texts for CQE implied signals
   const questionsAskedRef = useRef(0); // Part 19: max 3 questions before recap
   const processInputRef  = useRef(null); // stable ref to processInput for useEffect
@@ -534,7 +536,9 @@ export default function ConciergeChat({ onBuild, building, error }) {
         .map(m => ({ role: m.type, text: m.text }));
 
       // ── CALL GPT-4o INTELLIGENCE LAYER ───────────────────────────────────
+      console.log('[concierge] calling processMessage...');
       const result = await processMessage(userText, history, stateRef.current);
+      console.log('[concierge] result:', result);
 
       // ── MERGE RESULT INTO STATE ───────────────────────────────────────────
       const nextState = mergeIntelligenceResult(stateRef.current, result);
