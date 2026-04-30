@@ -1,247 +1,272 @@
 /**
- * AdminLocations.jsx
- * 
- * Redesigned location management — clean CMS-style interface.
- * Handles: browse, filter, edit, AI enrich, user submissions, completeness scoring.
+ * AdminLocations.jsx — TukaPath Admin
+ * Clean CMS interface. No Base44. Direct Supabase + Worker calls.
  */
 
-import React, { useState, useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import React, { useState, useCallback, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/api/supabase";
-import { base44 } from "@/api/client";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
-  Search, Plus, Sparkles, MapPin, AlertCircle, CheckCircle2,
-  Clock, Filter, MoreHorizontal, ChevronRight, Wand2,
-  Eye, EyeOff, Star, RefreshCw, Upload, Download,
-  Building2, TreePine, Landmark, Coffee, Utensils,
-  X, Check, Edit3, Trash2, Globe, Camera, FileText,
-  TrendingUp, Users, MessageSquare, Flag
+  Search, Plus, Wand2, MapPin, ChevronRight,
+  Eye, EyeOff, RefreshCw, Building2, TreePine,
+  Landmark, Coffee, Utensils, Star, X, Filter,
+  Sparkles, Users, CheckCircle2, AlertCircle, Clock
 } from "lucide-react";
 import LocationEditor from "./LocationEditor";
 
+// ── Worker call helper (no Base44) ───────────────────────────────────────────
+
+async function callWorker(endpoint, payload) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  const WORKER = import.meta.env.VITE_WORKER_URL;
+
+  const res = await fetch(`${WORKER}/${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.error || `Worker error ${res.status}`);
+  }
+  return res.json();
+}
+
 // ── Completeness scoring ──────────────────────────────────────────────────────
 
-function scoreCompleteness(loc) {
+function score(loc) {
   const fields = [
-    { key: 'name',          weight: 10 },
-    { key: 'city',          weight: 8  },
-    { key: 'country',       weight: 8  },
-    { key: 'category',      weight: 8  },
-    { key: 'latitude',      weight: 10 },
-    { key: 'longitude',     weight: 10 },
-    { key: 'quick_story',   weight: 15 },
-    { key: 'mystery_teaser',weight: 10 },
-    { key: 'fun_fact',      weight: 8  },
-    { key: 'image_url',     weight: 8  },
-    { key: 'opening_hours', weight: 5  },
+    { k: "name",          w: 10 },
+    { k: "city",          w: 8  },
+    { k: "country",       w: 8  },
+    { k: "category",      w: 8  },
+    { k: "latitude",      w: 10 },
+    { k: "longitude",     w: 10 },
+    { k: "quick_story",   w: 15 },
+    { k: "mystery_teaser",w: 10 },
+    { k: "fun_fact",      w: 8  },
+    { k: "image_url",     w: 8  },
+    { k: "opening_hours", w: 5  },
   ];
   let total = 0, earned = 0;
   for (const f of fields) {
-    total += f.weight;
-    if (loc[f.key] && String(loc[f.key]).trim().length > 0) earned += f.weight;
+    total += f.w;
+    if (loc[f.k] && String(loc[f.k]).trim().length > 0) earned += f.w;
   }
   return Math.round((earned / total) * 100);
 }
 
-function completenessColor(score) {
-  if (score >= 80) return 'text-emerald-600 bg-emerald-50';
-  if (score >= 50) return 'text-amber-600 bg-amber-50';
-  return 'text-red-500 bg-red-50';
-}
+// ── Category config ───────────────────────────────────────────────────────────
 
-function completenessLabel(score) {
-  if (score >= 80) return 'Complete';
-  if (score >= 50) return 'Partial';
-  return 'Incomplete';
-}
-
-// ── Category icons ────────────────────────────────────────────────────────────
-
-function CategoryIcon({ category, className = "w-3.5 h-3.5" }) {
-  const icons = {
-    museum: Building2, park: TreePine, landmark: Landmark,
-    cafe: Coffee, restaurant: Utensils, religious: Star,
-    monument: Landmark, hotel: Building2, bridge: Landmark,
-    tower: Landmark, hidden_spot: MapPin,
-  };
-  const Icon = icons[category] || MapPin;
-  return <Icon className={className} />;
-}
-
-const CATEGORY_COLORS = {
-  museum:     'bg-purple-50 text-purple-700 border-purple-200',
-  landmark:   'bg-blue-50 text-blue-700 border-blue-200',
-  park:       'bg-green-50 text-green-700 border-green-200',
-  religious:  'bg-amber-50 text-amber-700 border-amber-200',
-  restaurant: 'bg-orange-50 text-orange-700 border-orange-200',
-  cafe:       'bg-yellow-50 text-yellow-700 border-yellow-200',
-  hotel:      'bg-rose-50 text-rose-700 border-rose-200',
-  monument:   'bg-indigo-50 text-indigo-700 border-indigo-200',
-  bridge:     'bg-sky-50 text-sky-700 border-sky-200',
-  tower:      'bg-teal-50 text-teal-700 border-teal-200',
-  hidden_spot:'bg-pink-50 text-pink-700 border-pink-200',
+const CAT = {
+  museum:     { icon: Building2, color: "bg-purple-100 text-purple-700 border-purple-200" },
+  landmark:   { icon: Landmark,  color: "bg-blue-100 text-blue-700 border-blue-200"   },
+  park:       { icon: TreePine,  color: "bg-green-100 text-green-700 border-green-200" },
+  religious:  { icon: Star,      color: "bg-amber-100 text-amber-700 border-amber-200" },
+  restaurant: { icon: Utensils,  color: "bg-orange-100 text-orange-700 border-orange-200" },
+  cafe:       { icon: Coffee,    color: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+  monument:   { icon: Landmark,  color: "bg-indigo-100 text-indigo-700 border-indigo-200" },
+  hotel:      { icon: Building2, color: "bg-rose-100 text-rose-700 border-rose-200"   },
 };
 
-// ── AI Enrich Button ──────────────────────────────────────────────────────────
-
-function AIEnrichButton({ location, onDone }) {
-  const [loading, setLoading] = useState(false);
-
-  const enrich = async () => {
-    setLoading(true);
-    try {
-      const result = await base44.functions.invoke('generateStory', {
-        location_id: location.id,
-        generate_deep: false,
-        generate_audio: false,
-        is_new_version: !!location.quick_story,
-      });
-      if (result?.success) {
-        toast.success(`${location.name} enriched`);
-        onDone?.();
-      } else {
-        toast.error(result?.errors?.[0] || 'Enrichment failed — check worker logs');
-      }
-    } catch (e) {
-      toast.error('Enrichment failed: ' + e.message);
-    }
-    setLoading(false);
-  };
-
+function CatBadge({ cat, className = "" }) {
+  const cfg = CAT[cat] || { icon: MapPin, color: "bg-slate-100 text-slate-600 border-slate-200" };
+  const Icon = cfg.icon;
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); enrich(); }}
-      disabled={loading}
-      className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-violet-50 text-violet-700 hover:bg-violet-100 transition-colors disabled:opacity-50"
-    >
-      {loading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-      {loading ? 'Enriching...' : 'AI Enrich'}
-    </button>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${cfg.color} ${className}`}>
+      <Icon className="w-3 h-3" />
+      {cat || "other"}
+    </span>
   );
 }
 
-// ── Location Row ──────────────────────────────────────────────────────────────
+// ── Completeness pill ─────────────────────────────────────────────────────────
 
-function LocationRow({ loc, onEdit, onToggleVisible, onDelete, onEnriched }) {
-  const score = scoreCompleteness(loc);
-  const catColor = CATEGORY_COLORS[loc.category] || 'bg-slate-50 text-slate-600 border-slate-200';
-  const hasFeedback = loc.community_rating || loc.user_verified;
-
+function ScorePill({ pct }) {
+  const color = pct >= 80
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : pct >= 50
+    ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-500 border-red-200";
+  const Icon = pct >= 80 ? CheckCircle2 : pct >= 50 ? Clock : AlertCircle;
   return (
-    <div
-      onClick={() => onEdit(loc)}
-      className="group flex items-center gap-3 px-4 py-3 hover:bg-muted/40 cursor-pointer transition-colors border-b border-border/40 last:border-0"
-    >
-      {/* Status dot */}
-      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-        loc.status === 'active' ? 'bg-emerald-400' :
-        loc.status === 'pending' ? 'bg-amber-400' : 'bg-slate-300'
-      }`} />
-
-      {/* Category icon */}
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 border ${catColor}`}>
-        <CategoryIcon category={loc.category} />
-      </div>
-
-      {/* Name + location */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium truncate">{loc.name}</span>
-          {loc.has_story && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">Story</span>}
-          {loc.record_state === 'enriched' && <Sparkles className="w-3 h-3 text-violet-500 flex-shrink-0" />}
-          {hasFeedback && <Users className="w-3 h-3 text-blue-500 flex-shrink-0" />}
-        </div>
-        <div className="flex items-center gap-1.5 mt-0.5">
-          <span className="text-xs text-muted-foreground truncate">
-            {[loc.city, loc.country].filter(Boolean).join(', ') || 'No location'}
-          </span>
-          {loc.tier === 1 && <span className="text-[10px] px-1 py-0 rounded bg-amber-100 text-amber-700">T1</span>}
-        </div>
-      </div>
-
-      {/* Completeness */}
-      <div className={`hidden sm:flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium flex-shrink-0 ${completenessColor(score)}`}>
-        <span>{score}%</span>
-      </div>
-
-      {/* Category badge */}
-      <span className={`hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border flex-shrink-0 ${catColor}`}>
-        {loc.category || 'other'}
-      </span>
-
-      {/* Actions — visible on hover */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-        <AIEnrichButton location={loc} onDone={onEnriched} />
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleVisible(loc); }}
-          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
-        >
-          {loc.visible_to_users ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-        </button>
-      </div>
-
-      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
-    </div>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${color}`}>
+      <Icon className="w-3 h-3" />
+      {pct}%
+    </span>
   );
 }
 
-// ── Stats Bar ─────────────────────────────────────────────────────────────────
+// ── Stats strip ───────────────────────────────────────────────────────────────
 
-function StatsBar({ locations }) {
-  const total = locations.length;
-  const withStory = locations.filter(l => l.has_story).length;
-  const complete = locations.filter(l => scoreCompleteness(l) >= 80).length;
-  const partial = locations.filter(l => { const s = scoreCompleteness(l); return s >= 50 && s < 80; }).length;
-  const incomplete = locations.filter(l => scoreCompleteness(l) < 50).length;
-  const pending = locations.filter(l => l.status === 'pending').length;
+function Stats({ locs }) {
+  const total     = locs.length;
+  const stories   = locs.filter(l => l.has_story).length;
+  const complete  = locs.filter(l => score(l) >= 80).length;
+  const partial   = locs.filter(l => { const s = score(l); return s >= 50 && s < 80; }).length;
+  const missing   = locs.filter(l => score(l) < 50).length;
+  const pending   = locs.filter(l => l.status === "pending").length;
 
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 p-4 bg-muted/30 border-b border-border/40">
+    <div className="grid grid-cols-6 border-b border-border/40 bg-muted/20">
       {[
-        { label: 'Total', value: total, color: 'text-foreground' },
-        { label: 'With Story', value: withStory, color: 'text-primary' },
-        { label: 'Complete', value: complete, color: 'text-emerald-600' },
-        { label: 'Partial', value: partial, color: 'text-amber-600' },
-        { label: 'Incomplete', value: incomplete, color: 'text-red-500' },
-        { label: 'Pending Review', value: pending, color: 'text-blue-600' },
+        { label: "Total",    value: total,    color: "text-foreground" },
+        { label: "Stories",  value: stories,  color: "text-primary" },
+        { label: "Complete", value: complete, color: "text-emerald-600" },
+        { label: "Partial",  value: partial,  color: "text-amber-600" },
+        { label: "Weak",     value: missing,  color: "text-red-500" },
+        { label: "Pending",  value: pending,  color: "text-blue-600" },
       ].map(s => (
-        <div key={s.label} className="text-center">
-          <div className={`text-xl font-bold ${s.color}`}>{s.value}</div>
-          <div className="text-[11px] text-muted-foreground">{s.label}</div>
+        <div key={s.label} className="flex flex-col items-center py-3 border-r border-border/30 last:border-0">
+          <span className={`text-lg font-bold ${s.color}`}>{s.value}</span>
+          <span className="text-[10px] text-muted-foreground mt-0.5">{s.label}</span>
         </div>
       ))}
     </div>
   );
 }
 
-// ── Main Component ────────────────────────────────────────────────────────────
+// ── Location row ──────────────────────────────────────────────────────────────
+
+function Row({ loc, onEdit, onToggleVisible, onEnriched, bulkMode, checked, onCheck }) {
+  const [enriching, setEnriching] = useState(false);
+  const pct = score(loc);
+
+  const enrich = async (e) => {
+    e.stopPropagation();
+    setEnriching(true);
+    try {
+      const result = await callWorker("generateStory", {
+        location_id: loc.id,
+        generate_deep: false,
+        generate_audio: false,
+        is_new_version: !!loc.quick_story,
+      });
+      if (result?.success) {
+        toast.success(`${loc.name} — story generated`);
+        onEnriched();
+      } else {
+        toast.error(result?.errors?.[0] || "Enrichment failed");
+      }
+    } catch (err) {
+      toast.error(err.message);
+    }
+    setEnriching(false);
+  };
+
+  return (
+    <div
+      onClick={() => !bulkMode && onEdit(loc)}
+      className="group flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30 transition-colors border-b border-border/30 last:border-0 cursor-pointer"
+    >
+      {/* Bulk checkbox */}
+      {bulkMode && (
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={e => { e.stopPropagation(); onCheck(loc.id, e.target.checked); }}
+          className="w-4 h-4 accent-primary flex-shrink-0"
+          onClick={e => e.stopPropagation()}
+        />
+      )}
+
+      {/* Status dot */}
+      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+        loc.status === "active" ? "bg-emerald-400" :
+        loc.status === "pending" ? "bg-amber-400" : "bg-slate-300"
+      }`} />
+
+      {/* Name + meta */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-sm font-medium truncate max-w-[200px]">{loc.name}</span>
+          {loc.has_story && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-semibold">
+              Story
+            </span>
+          )}
+          {loc.record_state === "enriched" && (
+            <Sparkles className="w-3 h-3 text-violet-500 flex-shrink-0" />
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground truncate mt-0.5">
+          {[loc.city, loc.country].filter(Boolean).join(", ") || "No location set"}
+        </p>
+      </div>
+
+      {/* Category */}
+      <CatBadge cat={loc.category} className="hidden md:inline-flex flex-shrink-0" />
+
+      {/* Score */}
+      <ScorePill pct={pct} />
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <button
+          onClick={enrich}
+          disabled={enriching}
+          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-violet-50 text-violet-700 hover:bg-violet-100 border border-violet-200 transition-colors disabled:opacity-50 flex-shrink-0"
+          title="Generate AI story"
+        >
+          {enriching
+            ? <RefreshCw className="w-3 h-3 animate-spin" />
+            : <Wand2 className="w-3 h-3" />}
+          {enriching ? "..." : "Enrich"}
+        </button>
+        <button
+          onClick={e => { e.stopPropagation(); onToggleVisible(loc); }}
+          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+          title={loc.visible_to_users ? "Hide from users" : "Show to users"}
+        >
+          {loc.visible_to_users
+            ? <Eye className="w-3.5 h-3.5" />
+            : <EyeOff className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+
+      <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40 flex-shrink-0" />
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function AdminLocations() {
-  const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
-  const [filterCategory, setFilterCategory] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [filterCompleteness, setFilterCompleteness] = useState('all');
-  const [filterTier, setFilterTier] = useState('all');
-  const [editingLocation, setEditingLocation] = useState(null);
-  const [showCreate, setShowCreate] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-  const [bulkSelected, setBulkSelected] = useState(new Set());
-  const [bulkMode, setBulkMode] = useState(false);
+  const [locations, setLocations]         = useState([]);
+  const [loading, setLoading]             = useState(true);
+  const [search, setSearch]               = useState("");
+  const [filterCat, setFilterCat]         = useState("all");
+  const [filterStatus, setFilterStatus]   = useState("all");
+  const [filterScore, setFilterScore]     = useState("all");
+  const [showFilters, setShowFilters]     = useState(false);
+  const [editing, setEditing]             = useState(null);   // location object or "new"
+  const [bulkMode, setBulkMode]           = useState(false);
+  const [selected, setSelected]           = useState(new Set());
+  const [enrichingBulk, setEnrichingBulk] = useState(false);
 
-  const { data: locations = [], isLoading } = useQuery({
-    queryKey: ['admin-locations'],
-    queryFn: () => base44.entities.Location.list('-created_at', 2000),
-    staleTime: 30000,
-  });
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("locations")
+      .select("id,name,city,country,category,latitude,longitude,has_story,quick_story,mystery_teaser,fun_fact,image_url,status,visible_to_users,record_state,tier,visit_worthiness,opening_hours,community_rating,user_verified,created_at,updated_at")
+      .order("created_at", { ascending: false })
+      .limit(2000);
+    if (error) toast.error("Failed to load locations");
+    else setLocations(data || []);
+    setLoading(false);
+  }, []);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['admin-locations'] });
+  useEffect(() => { load(); }, [load]);
 
-  // Filter logic
+  // ── Filtered list ───────────────────────────────────────────────────────────
   const filtered = locations.filter(loc => {
     if (search) {
       const q = search.toLowerCase();
@@ -249,183 +274,248 @@ export default function AdminLocations() {
           !loc.city?.toLowerCase().includes(q) &&
           !loc.country?.toLowerCase().includes(q)) return false;
     }
-    if (filterCategory !== 'all' && loc.category !== filterCategory) return false;
-    if (filterStatus !== 'all' && loc.status !== filterStatus) return false;
-    if (filterTier !== 'all' && String(loc.tier) !== filterTier) return false;
-    if (filterCompleteness !== 'all') {
-      const s = scoreCompleteness(loc);
-      if (filterCompleteness === 'complete' && s < 80) return false;
-      if (filterCompleteness === 'partial' && (s < 50 || s >= 80)) return false;
-      if (filterCompleteness === 'incomplete' && s >= 50) return false;
+    if (filterCat !== "all" && loc.category !== filterCat) return false;
+    if (filterStatus !== "all" && loc.status !== filterStatus) return false;
+    if (filterScore !== "all") {
+      const s = score(loc);
+      if (filterScore === "complete" && s < 80)  return false;
+      if (filterScore === "partial"  && (s < 50 || s >= 80)) return false;
+      if (filterScore === "weak"     && s >= 50) return false;
     }
     return true;
   });
 
   const categories = [...new Set(locations.map(l => l.category).filter(Boolean))].sort();
+  const activeFilters = [filterCat, filterStatus, filterScore].filter(f => f !== "all").length;
 
+  // ── Actions ─────────────────────────────────────────────────────────────────
   const toggleVisible = async (loc) => {
-    await supabase.from('locations').update({ visible_to_users: !loc.visible_to_users }).eq('id', loc.id);
-    refresh();
-    toast.success(loc.visible_to_users ? 'Hidden from users' : 'Now visible to users');
-  };
-
-  const bulkEnrich = async () => {
-    const selectedIds = filtered
-      .filter(l => bulkSelected.has(l.id))
-      .map(l => l.id);
-    if (!selectedIds.length) { toast.error('Select locations first'); return; }
-    toast.info(`Enriching ${selectedIds.length} locations...`);
-    try {
-      const result = await base44.functions.invoke('generateBulkStories', {
-        location_ids: selectedIds,
-        generate_audio: false,
-      });
-      toast.success(`Done — ${result?.success || 0} of ${result?.total || 0} enriched`);
-      refresh();
-      setBulkSelected(new Set());
-    } catch (e) {
-      toast.error('Bulk enrich failed: ' + e.message);
+    const { error } = await supabase
+      .from("locations")
+      .update({ visible_to_users: !loc.visible_to_users })
+      .eq("id", loc.id);
+    if (error) toast.error("Update failed");
+    else {
+      toast.success(loc.visible_to_users ? "Hidden from users" : "Now visible");
+      load();
     }
   };
 
-  const activeFilters = [filterCategory, filterStatus, filterCompleteness, filterTier].filter(f => f !== 'all').length;
+  const enrichMissing = async () => {
+    const ids = filtered.filter(l => !l.has_story).slice(0, 20).map(l => l.id);
+    if (!ids.length) { toast.info("All visible locations already have stories"); return; }
+    setEnrichingBulk(true);
+    toast.info(`Enriching ${ids.length} locations...`);
+    try {
+      const result = await callWorker("generateBulkStories", {
+        location_ids: ids,
+        generate_audio: false,
+      });
+      toast.success(`Done — ${result?.success || 0} of ${result?.total || 0} enriched`);
+      load();
+    } catch (e) {
+      toast.error("Bulk enrich failed: " + e.message);
+    }
+    setEnrichingBulk(false);
+  };
 
-  if (editingLocation || showCreate) {
+  const enrichSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) { toast.error("Select locations first"); return; }
+    setEnrichingBulk(true);
+    toast.info(`Enriching ${ids.length} selected...`);
+    try {
+      const result = await callWorker("generateBulkStories", {
+        location_ids: ids,
+        generate_audio: false,
+      });
+      toast.success(`Done — ${result?.success || 0} of ${result?.total || 0} enriched`);
+      setSelected(new Set());
+      load();
+    } catch (e) {
+      toast.error("Bulk enrich failed: " + e.message);
+    }
+    setEnrichingBulk(false);
+  };
+
+  const toggleSelect = (id, checked) => {
+    const next = new Set(selected);
+    checked ? next.add(id) : next.delete(id);
+    setSelected(next);
+  };
+
+  const selectAll = () => {
+    if (selected.size === filtered.length) setSelected(new Set());
+    else setSelected(new Set(filtered.map(l => l.id)));
+  };
+
+  // ── Editing view ────────────────────────────────────────────────────────────
+  if (editing) {
     return (
       <LocationEditor
-        location={typeof showCreate === 'object' ? showCreate : editingLocation}
-        onClose={() => { setEditingLocation(null); setShowCreate(false); refresh(); }}
-        onSaved={() => { setEditingLocation(null); setShowCreate(false); refresh(); toast.success('Location saved'); }}
+        location={editing === "new" ? null : editing}
+        onClose={() => { setEditing(null); load(); }}
+        onSaved={() => { setEditing(null); load(); toast.success("Location saved"); }}
       />
     );
   }
 
+  // ── Main view ───────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background">
 
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-border/60">
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/60 bg-card">
         <div>
-          <h2 className="text-base font-semibold">Locations</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{locations.length} total · {filtered.length} shown</p>
+          <h2 className="text-sm font-semibold text-foreground">Locations</h2>
+          <p className="text-[11px] text-muted-foreground">
+            {locations.length} total · {filtered.length} shown
+          </p>
         </div>
+
         <div className="flex items-center gap-2">
-          {bulkMode && (
-            <>
-              <button
-                onClick={() => {
-                  if (bulkSelected.size === filtered.length) setBulkSelected(new Set());
-                  else setBulkSelected(new Set(filtered.map(l => l.id)));
-                }}
-                className="text-xs px-2 py-1 rounded border border-primary/30 text-primary hover:bg-primary/5"
-              >
-                {bulkSelected.size === filtered.length ? 'Deselect all' : `Select all ${filtered.length}`}
-              </button>
-              {bulkSelected.size > 0 && (
-                <Button size="sm" variant="outline" onClick={bulkEnrich} className="text-violet-700 border-violet-200 bg-violet-50 hover:bg-violet-100 gap-1">
-                  <Wand2 className="w-3.5 h-3.5" />
-                  Enrich {bulkSelected.size}
-                </Button>
-              )}
-            </>
-          )}
-          <Button size="sm" variant="outline"
-            onClick={async () => {
-              const incomplete = filtered.filter(l => !l.has_story).slice(0, 20).map(l => l.id);
-              if (!incomplete.length) { toast.info('All visible locations have stories'); return; }
-              toast.info(`Enriching ${incomplete.length} without stories...`);
-              try {
-                const result = await base44.functions.invoke('generateBulkStories', {
-                  location_ids: incomplete,
-                  generate_audio: false,
-                });
-                toast.success(`Done — ${result?.success || 0} enriched`);
-                refresh();
-              } catch (e) { toast.error(e.message); }
-            }}
-            className="text-violet-700 border-violet-200 bg-violet-50 hover:bg-violet-100 gap-1">
-            <Wand2 className="w-3.5 h-3.5" />
+          {/* Enrich Missing — always visible */}
+          <button
+            onClick={enrichMissing}
+            disabled={enrichingBulk}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 text-white hover:bg-violet-700 transition-colors disabled:opacity-50"
+          >
+            {enrichingBulk
+              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              : <Wand2 className="w-3.5 h-3.5" />}
             Enrich Missing
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => { setBulkMode(!bulkMode); setBulkSelected(new Set()); }} className={bulkMode ? 'bg-muted' : ''}>
-            {bulkMode ? 'Done' : 'Bulk'}
-          </Button>
-          <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1">
+          </button>
+
+          {/* Bulk toggle */}
+          <button
+            onClick={() => { setBulkMode(!bulkMode); setSelected(new Set()); }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+              bulkMode
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            {bulkMode ? "Cancel" : "Bulk"}
+          </button>
+
+          {/* Add */}
+          <button
+            onClick={() => setEditing("new")}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
             <Plus className="w-3.5 h-3.5" />
             Add
-          </Button>
+          </button>
         </div>
       </div>
 
-      {/* Stats */}
-      <StatsBar locations={locations} />
+      {/* ── Stats ──────────────────────────────────────────────────────────── */}
+      <Stats locs={locations} />
 
-      {/* Search + Filters */}
+      {/* ── Bulk action bar (when bulk mode active) ─────────────────────── */}
+      {bulkMode && (
+        <div className="flex items-center justify-between px-4 py-2 bg-primary/5 border-b border-primary/20">
+          <button
+            onClick={selectAll}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            {selected.size === filtered.length
+              ? "Deselect all"
+              : `Select all ${filtered.length}`}
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {selected.size} selected
+            </span>
+            {selected.size > 0 && (
+              <button
+                onClick={enrichSelected}
+                disabled={enrichingBulk}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition-colors"
+              >
+                {enrichingBulk
+                  ? <RefreshCw className="w-3 h-3 animate-spin" />
+                  : <Wand2 className="w-3 h-3" />}
+                Enrich {selected.size}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Search + filters ────────────────────────────────────────────── */}
       <div className="px-4 py-3 border-b border-border/40 space-y-2">
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name, city, country..."
+              placeholder="Search name, city, country…"
               className="pl-8 h-8 text-sm"
             />
             {search && (
-              <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2">
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2"
+              >
                 <X className="w-3.5 h-3.5 text-muted-foreground" />
               </button>
             )}
           </div>
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm border transition-colors ${showFilters || activeFilters > 0 ? 'bg-primary/10 border-primary/30 text-primary' : 'border-border hover:bg-muted'}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+              showFilters || activeFilters > 0
+                ? "bg-primary/10 border-primary/30 text-primary"
+                : "border-border text-muted-foreground hover:bg-muted"
+            }`}
           >
             <Filter className="w-3.5 h-3.5" />
-            Filter
-            {activeFilters > 0 && <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center">{activeFilters}</span>}
+            Filters
+            {activeFilters > 0 && (
+              <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[9px] font-bold flex items-center justify-center">
+                {activeFilters}
+              </span>
+            )}
           </button>
         </div>
 
         {showFilters && (
-          <div className="flex flex-wrap gap-2">
-            {/* Category */}
-            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
-              className="h-7 px-2 text-xs rounded-md border border-border bg-background">
+          <div className="flex flex-wrap gap-2 pt-1">
+            <select
+              value={filterCat}
+              onChange={e => setFilterCat(e.target.value)}
+              className="h-7 px-2 text-xs rounded-md border border-border bg-background text-foreground"
+            >
               <option value="all">All categories</option>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-
-            {/* Status */}
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-              className="h-7 px-2 text-xs rounded-md border border-border bg-background">
+            <select
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+              className="h-7 px-2 text-xs rounded-md border border-border bg-background text-foreground"
+            >
               <option value="all">All status</option>
               <option value="active">Active</option>
               <option value="pending">Pending review</option>
               <option value="inactive">Inactive</option>
             </select>
-
-            {/* Completeness */}
-            <select value={filterCompleteness} onChange={e => setFilterCompleteness(e.target.value)}
-              className="h-7 px-2 text-xs rounded-md border border-border bg-background">
+            <select
+              value={filterScore}
+              onChange={e => setFilterScore(e.target.value)}
+              className="h-7 px-2 text-xs rounded-md border border-border bg-background text-foreground"
+            >
               <option value="all">All completeness</option>
               <option value="complete">Complete (80%+)</option>
-              <option value="partial">Partial (50-79%)</option>
-              <option value="incomplete">Incomplete (&lt;50%)</option>
+              <option value="partial">Partial (50–79%)</option>
+              <option value="weak">Weak (&lt;50%)</option>
             </select>
-
-            {/* Tier */}
-            <select value={filterTier} onChange={e => setFilterTier(e.target.value)}
-              className="h-7 px-2 text-xs rounded-md border border-border bg-background">
-              <option value="all">All tiers</option>
-              <option value="1">Tier 1 — Hero</option>
-              <option value="2">Tier 2 — Standard</option>
-              <option value="3">Tier 3 — Support</option>
-            </select>
-
             {activeFilters > 0 && (
-              <button onClick={() => { setFilterCategory('all'); setFilterStatus('all'); setFilterCompleteness('all'); setFilterTier('all'); }}
-                className="h-7 px-2 text-xs rounded-md text-muted-foreground hover:text-foreground flex items-center gap-1">
+              <button
+                onClick={() => { setFilterCat("all"); setFilterStatus("all"); setFilterScore("all"); }}
+                className="h-7 px-2 text-xs rounded-md text-muted-foreground hover:text-foreground flex items-center gap-1 border border-border hover:bg-muted transition-colors"
+              >
                 <X className="w-3 h-3" /> Clear
               </button>
             )}
@@ -433,54 +523,50 @@ export default function AdminLocations() {
         )}
       </div>
 
-      {/* List */}
+      {/* ── List ────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">
-            <RefreshCw className="w-4 h-4 animate-spin mr-2" /> Loading locations...
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
+            <RefreshCw className="w-5 h-5 animate-spin" />
+            <span className="text-sm">Loading locations…</span>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <MapPin className="w-8 h-8 mb-3 opacity-30" />
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-muted-foreground">
+            <MapPin className="w-8 h-8 opacity-20" />
             <p className="text-sm">No locations match your filters</p>
-            {search && <button onClick={() => setSearch('')} className="text-xs text-primary mt-1">Clear search</button>}
+            {(search || activeFilters > 0) && (
+              <button
+                onClick={() => { setSearch(""); setFilterCat("all"); setFilterStatus("all"); setFilterScore("all"); }}
+                className="text-xs text-primary hover:underline"
+              >
+                Clear filters
+              </button>
+            )}
           </div>
         ) : (
           filtered.map(loc => (
-            <div key={loc.id} className="flex items-center">
-              {bulkMode && (
-                <div className="pl-4" onClick={e => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={bulkSelected.has(loc.id)}
-                    onChange={e => {
-                      const next = new Set(bulkSelected);
-                      e.target.checked ? next.add(loc.id) : next.delete(loc.id);
-                      setBulkSelected(next);
-                    }}
-                    className="w-3.5 h-3.5 accent-primary"
-                  />
-                </div>
-              )}
-              <div className="flex-1">
-                <LocationRow
-                  loc={loc}
-                  onEdit={setEditingLocation}
-                  onToggleVisible={toggleVisible}
-                  onDelete={async (l) => {
-                    if (!confirm(`Delete "${l.name}"?`)) return;
-                    await supabase.from('locations').delete().eq('id', l.id);
-                    refresh();
-                    toast.success('Deleted');
-                  }}
-                  onEnriched={refresh}
-                />
-              </div>
-            </div>
+            <Row
+              key={loc.id}
+              loc={loc}
+              onEdit={setEditing}
+              onToggleVisible={toggleVisible}
+              onEnriched={load}
+              bulkMode={bulkMode}
+              checked={selected.has(loc.id)}
+              onCheck={toggleSelect}
+            />
           ))
         )}
       </div>
 
+      {/* ── Footer count ─────────────────────────────────────────────── */}
+      {!loading && filtered.length > 0 && (
+        <div className="px-5 py-2.5 border-t border-border/40 bg-muted/20">
+          <p className="text-[11px] text-muted-foreground">
+            Showing {filtered.length} of {locations.length} locations
+          </p>
+        </div>
+      )}
     </div>
   );
 }
