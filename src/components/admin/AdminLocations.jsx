@@ -94,23 +94,23 @@ function AIEnrichButton({ location, onDone }) {
   const enrich = async () => {
     setLoading(true);
     try {
-      const prompt = `You are enriching a travel location record for TukaPath.
-
-Location: ${location.name}
-City: ${location.city || 'unknown'}
-Country: ${location.country || 'unknown'}
-Category: ${location.category || 'landmark'}
-Current story: ${location.quick_story || 'none'}
-
-Please provide enriched data in JSON format:
-{
-  "quick_story": "2-3 vivid, factual sentences about this place",
-  "mystery_teaser": "One intriguing hook under 20 words",
-  "fun_fact": "One surprising fact",
-  "best_time_of_day": "morning/afternoon/evening/any",
-  "timing_notes": "Brief note on best time to visit",
-  "visit_worthiness": "hero/worth_stop/conditional"
-}
+      const result = await base44.functions.invoke('generateStory', {
+        location_id: location.id,
+        generate_deep: false,
+        generate_audio: false,
+        is_new_version: !!location.quick_story,
+      });
+      if (result?.success) {
+        toast.success(`${location.name} enriched`);
+        onDone?.();
+      } else {
+        toast.error(result?.errors?.[0] || 'Enrichment failed');
+      }
+    } catch (e) {
+      toast.error('Enrichment failed: ' + e.message);
+    }
+    setLoading(false);
+  };
 
 Be specific, factual, and vivid. No generic descriptions.`;
 
@@ -213,7 +213,7 @@ function LocationRow({ loc, onEdit, onToggleVisible, onDelete, onEnriched }) {
       </span>
 
       {/* Actions — visible on hover */}
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+      <div className="flex items-center gap-1 flex-shrink-0">
         <AIEnrichButton location={loc} onDone={onEnriched} />
         <button
           onClick={(e) => { e.stopPropagation(); onToggleVisible(loc); }}
@@ -309,24 +309,22 @@ export default function AdminLocations() {
   };
 
   const bulkEnrich = async () => {
-    const selected = filtered.filter(l => bulkSelected.has(l.id) && scoreCompleteness(l) < 80);
-    if (!selected.length) { toast.error('No incomplete locations selected'); return; }
-    toast.info(`Enriching ${selected.length} locations...`);
-    for (const loc of selected.slice(0, 10)) {
-      try {
-        const prompt = `Enrich this travel location for TukaPath. Return JSON only.
-Location: ${loc.name}, ${loc.city || ''}, ${loc.country || ''}
-Category: ${loc.category}
-{"quick_story":"2-3 vivid sentences","mystery_teaser":"hook under 20 words","fun_fact":"one fact","visit_worthiness":"hero/worth_stop/conditional"}`;
-        const result = await base44.integrations.Core.InvokeLLM({ prompt, response_json_schema: { type: 'object', properties: { quick_story: { type: 'string' }, mystery_teaser: { type: 'string' }, fun_fact: { type: 'string' }, visit_worthiness: { type: 'string' } } } });
-        if (result?.quick_story) {
-          await supabase.from('locations').update({ ...result, has_story: true, record_state: 'enriched' }).eq('id', loc.id);
-        }
-      } catch {}
+    const selectedIds = filtered
+      .filter(l => bulkSelected.has(l.id))
+      .map(l => l.id);
+    if (!selectedIds.length) { toast.error('Select locations first'); return; }
+    toast.info(`Enriching ${selectedIds.length} locations...`);
+    try {
+      const result = await base44.functions.invoke('generateBulkStories', {
+        location_ids: selectedIds,
+        generate_audio: false,
+      });
+      toast.success(`Done — ${result?.success || 0} of ${result?.total || 0} enriched`);
+      refresh();
+      setBulkSelected(new Set());
+    } catch (e) {
+      toast.error('Bulk enrich failed: ' + e.message);
     }
-    refresh();
-    setBulkSelected(new Set());
-    toast.success('Bulk enrichment complete');
   };
 
   const activeFilters = [filterCategory, filterStatus, filterCompleteness, filterTier].filter(f => f !== 'all').length;
@@ -357,6 +355,24 @@ Category: ${loc.category}
               AI Enrich {bulkSelected.size}
             </Button>
           )}
+          <Button size="sm" variant="outline"
+            onClick={async () => {
+              const incomplete = filtered.filter(l => !l.has_story).slice(0, 20).map(l => l.id);
+              if (!incomplete.length) { toast.info('All visible locations have stories'); return; }
+              toast.info(`Enriching ${incomplete.length} without stories...`);
+              try {
+                const result = await base44.functions.invoke('generateBulkStories', {
+                  location_ids: incomplete,
+                  generate_audio: false,
+                });
+                toast.success(`Done — ${result?.success || 0} enriched`);
+                refresh();
+              } catch (e) { toast.error(e.message); }
+            }}
+            className="text-violet-700 border-violet-200 bg-violet-50 hover:bg-violet-100 gap-1">
+            <Wand2 className="w-3.5 h-3.5" />
+            Enrich 20
+          </Button>
           <Button size="sm" variant="outline" onClick={() => { setBulkMode(!bulkMode); setBulkSelected(new Set()); }} className={bulkMode ? 'bg-muted' : ''}>
             {bulkMode ? 'Done' : 'Bulk'}
           </Button>

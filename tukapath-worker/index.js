@@ -152,7 +152,7 @@ async function handleIntelligenceCall(body, env) {
   } catch (e) {
     return err(`Intelligence call failed: ${e.message}`, 500);
   }
-}
+
   if (!user) return json(null);
   try {
     const res = await fetch(
