@@ -104,46 +104,7 @@ function AIEnrichButton({ location, onDone }) {
         toast.success(`${location.name} enriched`);
         onDone?.();
       } else {
-        toast.error(result?.errors?.[0] || 'Enrichment failed');
-      }
-    } catch (e) {
-      toast.error('Enrichment failed: ' + e.message);
-    }
-    setLoading(false);
-  };
-
-Be specific, factual, and vivid. No generic descriptions.`;
-
-      const result = await base44.integrations.Core.InvokeLLM({
-        prompt,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            quick_story: { type: "string" },
-            mystery_teaser: { type: "string" },
-            fun_fact: { type: "string" },
-            best_time_of_day: { type: "string" },
-            timing_notes: { type: "string" },
-            visit_worthiness: { type: "string" },
-          }
-        }
-      });
-
-      if (result && typeof result === 'object') {
-        await supabase.from('locations').update({
-          quick_story: result.quick_story || location.quick_story,
-          mystery_teaser: result.mystery_teaser || location.mystery_teaser,
-          fun_fact: result.fun_fact || location.fun_fact,
-          best_time_of_day: result.best_time_of_day || location.best_time_of_day,
-          timing_notes: result.timing_notes || location.timing_notes,
-          visit_worthiness: result.visit_worthiness || location.visit_worthiness,
-          has_story: !!(result.quick_story || location.quick_story),
-          record_state: 'enriched',
-          updated_at: new Date().toISOString(),
-        }).eq('id', location.id);
-
-        toast.success(`${location.name} enriched`);
-        onDone?.();
+        toast.error(result?.errors?.[0] || 'Enrichment failed — check worker logs');
       }
     } catch (e) {
       toast.error('Enrichment failed: ' + e.message);
@@ -213,7 +174,7 @@ function LocationRow({ loc, onEdit, onToggleVisible, onDelete, onEnriched }) {
       </span>
 
       {/* Actions — visible on hover */}
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
         <AIEnrichButton location={loc} onDone={onEnriched} />
         <button
           onClick={(e) => { e.stopPropagation(); onToggleVisible(loc); }}
@@ -349,11 +310,24 @@ export default function AdminLocations() {
           <p className="text-xs text-muted-foreground mt-0.5">{locations.length} total · {filtered.length} shown</p>
         </div>
         <div className="flex items-center gap-2">
-          {bulkMode && bulkSelected.size > 0 && (
-            <Button size="sm" variant="outline" onClick={bulkEnrich} className="text-violet-700 border-violet-200 bg-violet-50 hover:bg-violet-100">
-              <Wand2 className="w-3.5 h-3.5 mr-1" />
-              AI Enrich {bulkSelected.size}
-            </Button>
+          {bulkMode && (
+            <>
+              <button
+                onClick={() => {
+                  if (bulkSelected.size === filtered.length) setBulkSelected(new Set());
+                  else setBulkSelected(new Set(filtered.map(l => l.id)));
+                }}
+                className="text-xs px-2 py-1 rounded border border-primary/30 text-primary hover:bg-primary/5"
+              >
+                {bulkSelected.size === filtered.length ? 'Deselect all' : `Select all ${filtered.length}`}
+              </button>
+              {bulkSelected.size > 0 && (
+                <Button size="sm" variant="outline" onClick={bulkEnrich} className="text-violet-700 border-violet-200 bg-violet-50 hover:bg-violet-100 gap-1">
+                  <Wand2 className="w-3.5 h-3.5" />
+                  Enrich {bulkSelected.size}
+                </Button>
+              )}
+            </>
           )}
           <Button size="sm" variant="outline"
             onClick={async () => {
@@ -371,7 +345,7 @@ export default function AdminLocations() {
             }}
             className="text-violet-700 border-violet-200 bg-violet-50 hover:bg-violet-100 gap-1">
             <Wand2 className="w-3.5 h-3.5" />
-            Enrich 20
+            Enrich Missing
           </Button>
           <Button size="sm" variant="outline" onClick={() => { setBulkMode(!bulkMode); setBulkSelected(new Set()); }} className={bulkMode ? 'bg-muted' : ''}>
             {bulkMode ? 'Done' : 'Bulk'}
@@ -507,18 +481,6 @@ export default function AdminLocations() {
         )}
       </div>
 
-      {/* Bulk select bar */}
-      {bulkMode && (
-        <div className="border-t border-border/60 px-4 py-3 bg-muted/30 flex items-center justify-between">
-          <button onClick={() => {
-            if (bulkSelected.size === filtered.length) setBulkSelected(new Set());
-            else setBulkSelected(new Set(filtered.map(l => l.id)));
-          }} className="text-xs text-primary">
-            {bulkSelected.size === filtered.length ? 'Deselect all' : `Select all ${filtered.length}`}
-          </button>
-          <span className="text-xs text-muted-foreground">{bulkSelected.size} selected</span>
-        </div>
-      )}
     </div>
   );
 }
