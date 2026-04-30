@@ -751,6 +751,10 @@ export default function ConciergeChat({ onBuild, building, error }) {
   const handleSend = () => {
     if (!input.trim() || thinking || building) return;
     processInput(input.trim());
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
   };
 
   // ── Voice recording ──────────────────────────────────────────────────────
@@ -886,16 +890,22 @@ export default function ConciergeChat({ onBuild, building, error }) {
           </button>
         )}
 
-        {/* Text input */}
-        <input
+        {/* Text input — auto-growing textarea */}
+        <textarea
           ref={inputRef}
-          type="text"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => {
+            setInput(e.target.value);
+            // Auto-grow
+            e.target.style.height = 'auto';
+            e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
+          }}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-          placeholder={thinking ? "Thinking…" : "Type your reply…"}
+          placeholder={thinking ? "Thinking…" : "Type your reply… (Shift+Enter for new line)"}
           disabled={thinking || building}
-          className="flex-1 px-4 py-2.5 rounded-full bg-muted/50 border border-border/60 text-sm focus:outline-none focus:border-primary/40 focus:bg-card transition-all disabled:opacity-50"
+          rows={1}
+          className="flex-1 px-4 py-2.5 rounded-2xl bg-muted/50 border border-border/60 text-sm focus:outline-none focus:border-primary/40 focus:bg-card transition-all disabled:opacity-50 resize-none overflow-hidden min-h-[40px] max-h-[160px] leading-relaxed"
+          style={{ height: 'auto' }}
         />
 
         {/* Voice */}
