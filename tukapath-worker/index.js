@@ -1,4 +1,5 @@
 import { buildConciergeJourney } from './buildConciergeJourney.js';
+import { generateLocationStory, saveStory, generateBulkStories, recordStoryPlay } from './storyEngine.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -152,28 +153,16 @@ async function handleIntelligenceCall(body, env) {
     return err(`Intelligence call failed: ${e.message}`, 500);
   }
 }
-
-async function handleGetUserProfile(body, env, user) {
   if (!user) return json(null);
-
   try {
     const res = await fetch(
       `${env.SUPABASE_URL}/rest/v1/user_profiles?user_id=eq.${user.id}&select=*`,
-      {
-        headers: {
-          apikey: env.SUPABASE_SERVICE_KEY,
-          Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}`,
-        },
-      }
+      { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
     );
-
     const data = await res.json();
     return json(Array.isArray(data) ? data[0] || null : data);
-  } catch {
-    return json(null);
-  }
+  } catch { return json(null); }
 }
-
 
 async function handleUpdateUserProfile(body, env, user) {
   if (!user) return json(null);
@@ -232,6 +221,88 @@ export default {
         return handleGetUserProfile(body, env, user);
       case 'updateUserProfile':
         return handleUpdateUserProfile(body, env, user);
+      case 'generateStory':
+        // Generate story for a single location
+        // body: { location_id, generate_deep, generate_audio, is_new_version }
+        if (!user) return err('Unauthorized', 401);
+        try {
+          const locRes = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/locations?id=eq.${body.location_id}&select=*`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          const locs = await locRes.json();
+          const location = locs?.[0];
+          if (!location) return err('Location not found', 404);
+          
+          const story = await generateLocationStory(location, env, {
+            generateQuick: true,
+            generateDeep: !!body.generate_deep,
+            generateAudio: !!body.generate_audio,
+          });
+          
+          if (story.success) {
+            await saveStory(body.location_id, story, env, !!body.is_new_version);
+          }
+          return json(story);
+        } catch (e) {
+          return err(e.message, 500);
+        }
+
+      case 'generateBulkStories':
+        // Generate stories for multiple locations
+        // body: { location_ids: [], generate_audio: false }
+        if (!user) return err('Unauthorized', 401);
+        try {
+          const results = await generateBulkStories(
+            body.location_ids || [],
+            env,
+            { generateQuick: true, generateAudio: !!body.generate_audio }
+          );
+          return json({ results, total: results.length, success: results.filter(r => r.success).length });
+        } catch (e) {
+          return err(e.message, 500);
+        }
+
+      case 'recordStoryPlay':
+        // Track story listening statistics
+        // body: { user_id, location_id, story_type, duration_played_seconds, total_duration_seconds, triggered_by }
+        try {
+          const stat = await recordStoryPlay(body, env);
+          return json(stat);
+        } catch (e) {
+          return err(e.message, 500);
+        }
+
+      case 'generateAudio':
+        // Generate audio for an existing story text
+        // body: { location_id, story_type: 'quick'|'deep' }
+        if (!user) return err('Unauthorized', 401);
+        try {
+          const locRes2 = await fetch(
+            `${env.SUPABASE_URL}/rest/v1/locations?id=eq.${body.location_id}&select=*`,
+            { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` } }
+          );
+          const locs2 = await locRes2.json();
+          const loc2 = locs2?.[0];
+          if (!loc2) return err('Location not found', 404);
+          
+          const storyText = body.story_type === 'deep' ? loc2.deep_story : loc2.quick_story;
+          if (!storyText) return err('No story text to convert', 400);
+
+          const story2 = await generateLocationStory(loc2, env, {
+            generateQuick: false,
+            generateDeep: false,
+            generateAudio: true,
+          });
+          
+          if (story2.quick_audio_url || story2.deep_audio_url) {
+            await saveStory(body.location_id, story2, env, false);
+          }
+          return json({ success: true, quick_audio_url: story2.quick_audio_url, deep_audio_url: story2.deep_audio_url });
+        } catch (e) {
+          return err(e.message, 500);
+        }
+
       case 'buildConciergeJourney':
         return buildConciergeJourney(body, env, user || { id: 'guest', email: 'guest' });
       default:
