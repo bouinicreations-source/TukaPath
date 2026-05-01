@@ -115,6 +115,7 @@ function Stats({ locs }) {
   const missing   = locs.filter(l => score(l) < 50).length;
   const pending   = locs.filter(l => l.status === "pending").length;
 
+  
   return (
     <div className="grid grid-cols-6 border-b border-border/40 bg-muted/20">
       {[
