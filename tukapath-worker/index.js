@@ -292,6 +292,7 @@ export default {
             generateAudio: true,
           });
           
+          
           if (story2.quick_audio_url || story2.deep_audio_url) {
             await saveStory(body.location_id, story2, env, false);
           }

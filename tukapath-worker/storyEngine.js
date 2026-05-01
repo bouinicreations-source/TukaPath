@@ -468,7 +468,6 @@ export async function recordStoryPlay(data, env) {
     ? duration_played_seconds
     : null;
 
-    
   await fetch(`${env.SUPABASE_URL}/rest/v1/story_play_events`, {
     method: 'POST',
     headers: {
